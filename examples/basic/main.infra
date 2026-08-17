@@ -1,0 +1,28 @@
+terraform {
+  requiredVersion: ">= 1.5.0",
+}
+
+provider Terraform from "terraform.io/builtin/terraform"
+
+input environment: string = "development"
+input replicas: number = 2
+input labels: list<string> = ["infra", "example"]
+input metadataOverride: dynamic = {}
+
+let deploymentName = f"infralang-{environment}"
+let capacity = replicas * 2
+
+configure terraform = Terraform({})
+
+resource metadata = terraform.data("metadata", {
+  input: {
+    name: deploymentName,
+    capacity: capacity,
+    active: true,
+    labels: labels,
+    override: metadataOverride,
+  },
+})
+
+output name = metadata.output.name
+output capacity = metadata.output.capacity

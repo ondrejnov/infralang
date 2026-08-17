@@ -1,0 +1,24 @@
+terraform {
+  requiredVersion: ">= 1.5.0",
+}
+
+provider Null from "hashicorp/null" version "3.3.1"
+
+input marker: string = "alias-validation"
+
+configure nullEast = Null("east", {})
+
+resource placeholder = nullEast.resource("placeholder", {
+  triggers: {
+    "Marker": marker,
+  },
+})
+
+module childModule "child" from "./child" {
+  marker: marker,
+} using {
+  "null.east": nullEast,
+}
+
+output childId = childModule.id
+output placeholderId = placeholder.id

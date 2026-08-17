@@ -1,0 +1,35 @@
+terraform {
+  requiredVersion: ">= 1.5.0",
+}
+
+provider Lvm from "github.com/ondrejnov/lvm" version "0.5.0"
+
+# The provider manages logical volumes only. This volume group must already
+# exist on the remote host.
+input remoteHost: string = "10.0.0.2"
+input remoteUser: string = "root"
+input volumeGroup: string = "vg0"
+input volumeName: string = "infralang-data"
+input sizeGiB: number = 10
+
+configure lvm = Lvm({
+  ssh: {
+    host: remoteHost,
+    user: remoteUser,
+  },
+})
+
+resource dataVolume = lvm.logicalVolume("data", {
+  name: volumeName,
+  size: sizeGiB,
+  volumeGroup: f"volumeGroup_{remoteHost}",
+}, {
+  lifecycle: {
+    preventDestroy: true,
+  },
+})
+
+output volumeId = dataVolume.id
+output volumePath = dataVolume.path
+output volumeUuid = dataVolume.uuid
+output actualSizeBytes = dataVolume.actual_size_bytes

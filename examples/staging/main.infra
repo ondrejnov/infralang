@@ -1,0 +1,145 @@
+terraform {
+  requiredVersion: ">= 1.5.0",
+}
+
+provider Libvirt from "dmacvicar/libvirt" version "~> 0.9.3"
+provider Lvm from "github.com/ondrejnov/lvm" version "0.5.0"
+
+# The snake_case input name intentionally remains compatible with the current
+# terraform-staging/terraform.tfvars file.
+input vm_defaults: dynamic
+
+let db1Common = merge(vm_defaults, {
+  gateway: "10.0.1.254",
+  remote_host: "10.0.0.84",
+})
+
+let db2Common = merge(vm_defaults, {
+  gateway: "10.0.2.254",
+  remote_host: "10.0.0.85",
+})
+
+configure libvirtDb1 = Libvirt("db1", {
+  uri: f"qemu+sshcmd://{vm_defaults.remote_user}@{db1Common.remote_host}/system?keyfile={vm_defaults.remote_private_key_path}&knownhosts=~/.ssh/known_hosts",
+})
+
+configure libvirtDb2 = Libvirt("db2", {
+  uri: f"qemu+sshcmd://{vm_defaults.remote_user}@{db2Common.remote_host}/system?keyfile={vm_defaults.remote_private_key_path}&knownhosts=~/.ssh/known_hosts",
+})
+
+configure lvmDb1 = Lvm("db1", {
+  ssh: {
+    host: db1Common.remote_host,
+    user: vm_defaults.remote_user,
+  },
+})
+
+configure lvmDb2 = Lvm("db2", {
+  ssh: {
+    host: db2Common.remote_host,
+    user: vm_defaults.remote_user,
+  },
+})
+
+module hostDb1 "host_db1" from "./modules/libvirt_host" {
+  commonConfig: db1Common,
+  networkName: "staging",
+  vms: {
+    db1: {
+      diskSizeGib: 5,
+      ipAddress: "10.0.1.10",
+    },
+    kube: {
+      cpuMode: "host-model",
+      ipAddress: "10.0.1.20",
+      ramMb: 1900,
+      vcpu: 6,
+    },
+    nfs: {
+      ipAddress: "10.0.1.11",
+      ramMb: 512,
+    },
+    pg1: {
+      diskSizeGib: 10,
+      ipAddress: "10.0.1.12",
+      qemuGuestAgentEnabled: true,
+      ramMb: 768,
+      vcpu: 1,
+    },
+    node1: {
+      cpuMode: "host-model",
+      ipAddress: "10.0.1.21",
+      ramMb: 1200,
+      vcpu: 6,
+    },
+    node2: {
+      cpuMode: "host-model",
+      ipAddress: "10.0.1.22",
+      ramMb: 1200,
+      vcpu: 6,
+    },
+  },
+} using {
+  libvirt: libvirtDb1,
+  lvm: lvmDb1,
+}
+
+module hostDb2 "host_db2" from "./modules/libvirt_host" {
+  commonConfig: db2Common,
+  networkName: "staging",
+  vms: {
+    db2: {
+      diskSizeGib: 5,
+      ipAddress: "10.0.2.10",
+    },
+    kube: {
+      ipAddress: "10.0.2.20",
+      ramMb: 1900,
+    },
+    nfs2: {
+      ipAddress: "10.0.2.11",
+      ramMb: 512,
+    },
+    pg2: {
+      diskSizeGib: 10,
+      ipAddress: "10.0.2.12",
+      qemuGuestAgentEnabled: true,
+      ramMb: 768,
+      vcpu: 1,
+    },
+    node1: {
+      ipAddress: "10.0.2.21",
+      ramMb: 1000,
+    },
+    node2: {
+      ipAddress: "10.0.2.22",
+      ramMb: 1000,
+    },
+  },
+} using {
+  libvirt: libvirtDb2,
+  lvm: lvmDb2,
+}
+
+output db1 = hostDb1.vms["db1"]
+output db2 = hostDb2.vms["db2"]
+
+output kubernetes = {
+  kube: hostDb1.vms["kube"],
+  node1: hostDb1.vms["node1"],
+  node2: hostDb1.vms["node2"],
+}
+
+output kubernetes2 = {
+  kube: hostDb2.vms["kube"],
+  node1: hostDb2.vms["node1"],
+  node2: hostDb2.vms["node2"],
+}
+
+output nfs = hostDb1.vms["nfs"]
+output nfs2 = hostDb2.vms["nfs2"]
+
+output postgresql = {
+  pg1: hostDb1.vms["pg1"],
+  pg2: hostDb2.vms["pg2"],
+}
