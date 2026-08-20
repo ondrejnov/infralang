@@ -1,0 +1,120 @@
+{
+  "name": "vscode-infralang",
+  "displayName": "InfraLang",
+  "description": "InfraLang language support for Visual Studio Code",
+  "version": "0.2.1",
+  "publisher": "infralang",
+  "license": "MIT",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ondrejnov/infralang.git",
+    "directory": "vscode-infralang"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "engines": {
+    "vscode": "^1.92.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "keywords": [
+    "infralang",
+    "infrastructure",
+    "terraform",
+    "opentofu"
+  ],
+  "activationEvents": [
+    "onLanguage:infralang",
+    "onCommand:infralang.restartLanguageServer",
+    "workspaceContains:**/*.infra"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "infralang",
+        "aliases": [
+          "InfraLang",
+          "infralang"
+        ],
+        "extensions": [
+          ".infra"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "infralang",
+        "scopeName": "source.infralang",
+        "path": "./syntaxes/infralang.tmGrammar.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "infralang.restartLanguageServer",
+        "title": "InfraLang: Restart Language Server"
+      }
+    ],
+    "configuration": {
+      "title": "InfraLang",
+      "properties": {
+        "infralang.languageServer.enable": {
+          "type": "boolean",
+          "default": true,
+          "scope": "window",
+          "description": "Enable the InfraLang language server."
+        },
+        "infralang.languageServer.path": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "description": "Path to an InfraLang language server executable. Leave empty to use the bundled executable."
+        },
+        "infralang.languageServer.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "machine-overridable",
+          "description": "Arguments passed to the InfraLang language server executable."
+        },
+        "infralang.languageServer.providerSchema.enable": {
+          "type": "boolean",
+          "default": true,
+          "scope": "window",
+          "description": "Use locally installed Terraform or OpenTofu provider schemas for completion in trusted workspaces."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "node esbuild.mjs",
+    "compile:production": "node esbuild.mjs --production",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "compile:tests": "tsc -p tsconfig.test.json",
+    "test:client": "npm run compile:tests && node --test out-test/test/serverPath.test.js",
+    "test": "npm run typecheck && npm run test:client && npm run test-server",
+    "build-server": "node scripts/build-server.mjs",
+    "test-server": "go test ./server/...",
+    "vscode:prepublish": "npm run typecheck && npm run compile:production",
+    "package": "node scripts/package.mjs",
+    "package:all": "node scripts/package.mjs --all"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.17.0",
+    "@types/vscode": "^1.92.0",
+    "@vscode/vsce": "^3.6.0",
+    "esbuild": "^0.25.9",
+    "typescript": "^5.9.2"
+  }
+}

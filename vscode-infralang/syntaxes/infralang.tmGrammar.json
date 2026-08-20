@@ -1,0 +1,288 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "InfraLang",
+  "scopeName": "source.infralang",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#f-strings" },
+    { "include": "#raw-addresses" },
+    { "include": "#declarations" },
+    { "include": "#expression" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.number-sign.infralang",
+          "match": "#.*$"
+        },
+        {
+          "name": "comment.line.double-slash.infralang",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.infralang",
+          "begin": "/\\*",
+          "beginCaptures": {
+            "0": { "name": "punctuation.definition.comment.begin.infralang" }
+          },
+          "end": "\\*/",
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.comment.end.infralang" }
+          }
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(provider)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.provider.infralang" },
+            "2": { "name": "entity.name.type.provider.infralang" }
+          }
+        },
+        {
+          "match": "\\b(component)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.component.infralang" },
+            "2": { "name": "entity.name.type.component.infralang" }
+          }
+        },
+        {
+          "match": "\\b(export)\\s+(type)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.control.export.infralang" },
+            "2": { "name": "keyword.declaration.type.infralang" },
+            "3": { "name": "entity.name.type.infralang" }
+          }
+        },
+        {
+          "match": "\\b(type)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.type.infralang" },
+            "2": { "name": "entity.name.type.infralang" }
+          }
+        },
+        {
+          "match": "\\b(import)\\s+(module)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.control.import.infralang" },
+            "2": { "name": "keyword.declaration.module.infralang" },
+            "3": { "name": "entity.name.type.module.infralang" }
+          }
+        },
+        {
+          "match": "\\b(import)\\s+(type)\\b",
+          "captures": {
+            "1": { "name": "keyword.control.import.infralang" },
+            "2": { "name": "keyword.declaration.type.infralang" }
+          }
+        },
+        {
+          "match": "\\b(input|const|let|configure|resource|data|module|output|instantiate)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.infralang" },
+            "2": { "name": "entity.name.variable.infralang" }
+          }
+        },
+        {
+          "match": "\\b(terraform|moved|static|export)\\b",
+          "name": "keyword.declaration.infralang"
+        }
+      ]
+    },
+    "expression": {
+      "patterns": [
+        { "include": "#comments" },
+        { "include": "#f-strings" },
+        { "include": "#raw-addresses" },
+        { "include": "#object-keys" },
+        { "include": "#strings" },
+        { "include": "#language-constants" },
+        { "include": "#types" },
+        { "include": "#provider-methods" },
+        { "include": "#function-calls" },
+        { "include": "#contextual-keywords" },
+        { "include": "#operators" },
+        { "include": "#numbers" }
+      ]
+    },
+    "f-strings": {
+      "name": "string.quoted.double.interpolated.infralang",
+      "begin": "\\b(f)(\")",
+      "beginCaptures": {
+        "1": { "name": "storage.type.string.infralang" },
+        "2": { "name": "punctuation.definition.string.begin.infralang" }
+      },
+      "end": "(?<!\\\\)\"|$",
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.string.end.infralang" }
+      },
+      "patterns": [
+        { "include": "#escapes" },
+        {
+          "name": "constant.character.escape.brace.infralang",
+          "match": "\\{\\{|\\}\\}"
+        },
+        { "include": "#interpolation" }
+      ]
+    },
+    "interpolation": {
+      "name": "meta.interpolation.infralang",
+      "begin": "(?<!\\{)\\{(?!\\{)",
+      "beginCaptures": {
+        "0": { "name": "punctuation.section.interpolation.begin.infralang" }
+      },
+      "end": "(?<!\\})\\}(?!\\})",
+      "endCaptures": {
+        "0": { "name": "punctuation.section.interpolation.end.infralang" }
+      },
+      "patterns": [
+        { "include": "#balanced-braces" },
+        { "include": "#expression" }
+      ]
+    },
+    "balanced-braces": {
+      "begin": "\\{",
+      "beginCaptures": {
+        "0": { "name": "punctuation.section.braces.begin.infralang" }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.section.braces.end.infralang" }
+      },
+      "patterns": [
+        { "include": "#balanced-braces" },
+        { "include": "#expression" }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.infralang",
+      "begin": "\"",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.string.begin.infralang" }
+      },
+      "end": "(?<!\\\\)\"|$",
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.string.end.infralang" }
+      },
+      "patterns": [{ "include": "#escapes" }]
+    },
+    "escapes": {
+      "patterns": [
+        {
+          "name": "constant.character.escape.infralang",
+          "match": "\\\\(?:[abfnrtv\\\\\"']|[0-7]{3}|x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8})"
+        },
+        {
+          "name": "invalid.illegal.escape.infralang",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "raw-addresses": {
+      "name": "string.quoted.other.raw-address.infralang",
+      "begin": "`",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.string.begin.infralang" }
+      },
+      "end": "`",
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.string.end.infralang" }
+      }
+    },
+    "object-keys": {
+      "patterns": [
+        {
+          "name": "variable.other.property.infralang",
+          "match": "\"(?:\\\\.|[^\"\\\\])*\"(?=\\s*:)"
+        },
+        {
+          "name": "variable.other.property.infralang",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\??\\s*:)"
+        }
+      ]
+    },
+    "language-constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.infralang",
+          "match": "\\b(?:true|false)\\b"
+        },
+        {
+          "name": "constant.language.null.infralang",
+          "match": "\\b(?:null|none)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "storage.type.primitive.infralang",
+          "match": "\\b(?:string|number|bool|dynamic|any)\\b"
+        },
+        {
+          "name": "storage.type.container.infralang",
+          "match": "\\b(?:list|set|map|optional|object)\\b(?=\\s*(?:<|\\{))"
+        },
+        {
+          "name": "support.type.alias.infralang",
+          "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+        }
+      ]
+    },
+    "provider-methods": {
+      "name": "support.function.provider.infralang",
+      "match": "(?<=\\.)[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()"
+    },
+    "function-calls": {
+      "name": "support.function.infralang",
+      "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()"
+    },
+    "contextual-keywords": {
+      "name": "keyword.control.infralang",
+      "match": "\\b(?:from|version|with|using|for|in|as|when|if|validate|else|to)\\b"
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.spread.infralang",
+          "match": "\\.\\.\\."
+        },
+        {
+          "name": "keyword.operator.arrow.infralang",
+          "match": "->|=>"
+        },
+        {
+          "name": "keyword.operator.logical.infralang",
+          "match": "&&|\\|\\||!"
+        },
+        {
+          "name": "keyword.operator.comparison.infralang",
+          "match": "==|!=|<=|>=|<|>"
+        },
+        {
+          "name": "keyword.operator.coalesce.infralang",
+          "match": "\\?\\?"
+        },
+        {
+          "name": "keyword.operator.conditional.infralang",
+          "match": "\\?"
+        },
+        {
+          "name": "keyword.operator.assignment.infralang",
+          "match": "="
+        },
+        {
+          "name": "keyword.operator.arithmetic.infralang",
+          "match": "[+*/%\\-]"
+        }
+      ]
+    },
+    "numbers": {
+      "name": "constant.numeric.infralang",
+      "match": "(?<![A-Za-z0-9_])(?:[0-9]+(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)(?![A-Za-z0-9_])"
+    }
+  }
+}

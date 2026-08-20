@@ -16,13 +16,14 @@ configure lvm = Lvm({
   ssh: {
     host: remoteHost,
     user: remoteUser,
+
   },
 })
 
 resource dataVolume = lvm.logicalVolume("data", {
   name: volumeName,
   size: sizeGiB,
-  volumeGroup: f"volumeGroup_{remoteHost}",
+  volumeGroup: volumeGroup,
 }, {
   lifecycle: {
     preventDestroy: true,
@@ -33,3 +34,4 @@ output volumeId = dataVolume.id
 output volumePath = dataVolume.path
 output volumeUuid = dataVolume.uuid
 output actualSizeBytes = dataVolume.actual_size_bytes
+

@@ -1,0 +1,15 @@
+# Changelog
+
+All notable changes to the InfraLang Visual Studio Code extension are documented here.
+
+## Unreleased
+
+- Complete input keys and metadata for Terraform modules present in the local initialization manifest.
+
+## 0.1.0
+
+- Add InfraLang language registration and language configuration for `.infra` files.
+- Add TextMate highlighting for the current InfraLang syntax.
+- Add a desktop `vscode-languageclient` client with bundled or configurable server startup, full `.infra` file watching, output logging, and restart support.
+- Add inline compiler diagnostics, completion for InfraLang symbols and installed provider schemas, Go to Definition, hover, document symbols, and workspace symbols.
+- Add TypeScript, esbuild, server build/test scripts, client unit tests, and VSIX packaging configuration.
