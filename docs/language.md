@@ -466,7 +466,7 @@ comprehensions:
 ```infra
 let enabled = [for name, machine in machines: name if machine.enabled]
 let addresses = {for name, machine in machines: name => machine.ipAddress}
-let merged = merge(base, overrides)
+let merged = { ...base, ...overrides }
 let document = yamlencode(merged)
 ```
 

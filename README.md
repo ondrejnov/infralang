@@ -36,35 +36,43 @@ infrastructure.
 
 See [docs/language.md](docs/language.md) for the language reference.
 
-## Why InfraLang instead of Terraform HCL?
+## Why move from Terraform HCL to InfraLang?
 
-InfraLang keeps Terraform's providers, modules, dependency graph, state, plan,
-and apply lifecycle. The change is in how configuration is authored: `.infra`
-files are checked and compiled to ordinary Terraform JSON before Terraform or
-OpenTofu runs.
+Terraform is an excellent execution engine, but HCL becomes increasingly
+awkward as infrastructure grows into a software project. InfraLang replaces the
+authoring language, not the proven runtime: it compiles statically checked
+`.infra` files to ordinary Terraform JSON, then leaves provider execution,
+dependency ordering, state, plan, and apply to Terraform or OpenTofu.
 
-- **Less configuration ceremony.** Providers, inputs, locals, resources, and
-  outputs use compact declarations instead of several different block shapes.
-- **References are ordinary expressions.** Use `bucket.id`, `region`, and
-  `f"application-{environment}"` instead of repeating `var`, `local`, and
-  provider resource addresses throughout the source.
-- **Stronger checks before planning.** InfraLang catches unknown symbols, basic
-  type errors, invalid local module arguments, and incompatible provider
-  mappings with source line and column diagnostics.
-- **Typed composition.** Structural object types, optional fields, checked
-  input forwarding, and typed components make reusable infrastructure
-  interfaces explicit.
-- **Safe compile-time reuse.** Constants, `static for`, and components reduce
-  repeated declarations without running arbitrary code or changing Terraform
-  resource identity.
-- **A gradual migration path.** Existing providers and Terraform modules remain
-  usable. Explicit resource and module labels preserve Terraform addresses, and
-  `moved` declarations cover intentional state migrations.
+This gives infrastructure code the abstractions and feedback developers expect
+from a programming language without giving up the Terraform ecosystem:
+
+| Terraform HCL | InfraLang |
+| --- | --- |
+| References expose declaration categories: `var.region`, `local.name`, `aws_s3_bucket.application.id` | Values are referenced directly: `region`, `name`, `bucket.id` |
+| Different block shapes for variables, locals, resources, modules, and outputs | A small, consistent set of declarations and expressions |
+| Many interface mistakes surface only during `validate` or `plan` | Unknown names, type mismatches, local module arguments, and provider mappings are checked at compile time with source locations |
+| Reuse usually requires a state-visible module boundary or repeated dynamic expressions | Typed components and `static for` remove repetition at compile time without adding state namespaces |
+| Object contracts are spread across variable declarations and call sites | Structural types, optional fields, validations, and checked input forwarding define explicit interfaces |
+| Refactoring source names can accidentally imply resource-address changes | Source handles and explicit Terraform labels are separate, so readability refactors can preserve state identity |
+
+The result is most noticeable beyond small configurations: less ceremony,
+shorter references, reusable typed building blocks, and errors reported against
+the source before a plan starts. InfraLang also supports exact compile-time
+constants and deterministic expansion without evaluating arbitrary user code,
+so generated infrastructure remains predictable and reviewable.
+
+Adoption does not require abandoning existing work. Terraform and OpenTofu
+providers remain available, existing Terraform modules are first-class values,
+explicit labels can preserve current resource addresses, and `moved`
+declarations describe intentional state migrations. Teams can therefore move
+one directory at a time while keeping the same backend, state, providers, and
+plan/apply workflow.
 
 InfraLang is currently an MVP, so it should be evaluated rather than adopted
 for production infrastructure today. Provider schemas are still validated by
-Terraform/OpenTofu, and `infralang check` does not replace `terraform validate`
-or reviewing a plan.
+Terraform/OpenTofu, and `infralang check` complements rather than replaces
+`terraform validate` and plan review.
 
 ### Syntax comparison
 
@@ -202,10 +210,11 @@ const environments = {
 component ApplicationStorage(label: string, config: StorageConfig) using {
   aws: AWS,
 } {
-  let tags = merge(config.tags, {
+  let tags = {
+    ...config.tags,
     "Environment": config.environment,
     "ManagedBy": "InfraLang",
-  })
+  }
 
   resource bucket = aws.s3Bucket(label, {
     bucket: config.bucketName,
