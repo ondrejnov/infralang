@@ -104,20 +104,3 @@ output postgresql = {
   pg1: hostModules["db1"].vms["pg1"],
   pg2: hostModules["db2"].vms["pg2"],
 } with { description: "Created PostgreSQL VM details." }
-
-moved {
-  `libvirt_network.staging` -> `module.host_db1.libvirt_network.main`,
-  `libvirt_network.staging_db2` -> `module.host_db2.libvirt_network.main`,
-  `libvirt_pool.cloudinit` -> `module.host_db1.libvirt_pool.cloudinit`,
-  `libvirt_pool.cloudinit_db2` -> `module.host_db2.libvirt_pool.cloudinit`,
-  `module.db1` -> `module.host_db1.module.vm["db1"]`,
-  `module.db2` -> `module.host_db2.module.vm["db2"]`,
-  `module.kubernetes["kube"]` -> `module.host_db1.module.vm["kube"]`,
-  `module.kubernetes["node1"]` -> `module.host_db1.module.vm["node1"]`,
-  `module.kubernetes["node2"]` -> `module.host_db1.module.vm["node2"]`,
-  `module.kubernetes2["kube"]` -> `module.host_db2.module.vm["kube"]`,
-  `module.kubernetes2["node1"]` -> `module.host_db2.module.vm["node1"]`,
-  `module.kubernetes2["node2"]` -> `module.host_db2.module.vm["node2"]`,
-  `module.nfs` -> `module.host_db1.module.vm["nfs"]`,
-  `module.nfs2` -> `module.host_db2.module.vm["nfs2"]`,
-}

@@ -36,6 +36,244 @@ infrastructure.
 
 See [docs/language.md](docs/language.md) for the language reference.
 
+## Why InfraLang instead of Terraform HCL?
+
+InfraLang keeps Terraform's providers, modules, dependency graph, state, plan,
+and apply lifecycle. The change is in how configuration is authored: `.infra`
+files are checked and compiled to ordinary Terraform JSON before Terraform or
+OpenTofu runs.
+
+- **Less configuration ceremony.** Providers, inputs, locals, resources, and
+  outputs use compact declarations instead of several different block shapes.
+- **References are ordinary expressions.** Use `bucket.id`, `region`, and
+  `f"application-{environment}"` instead of repeating `var`, `local`, and
+  provider resource addresses throughout the source.
+- **Stronger checks before planning.** InfraLang catches unknown symbols, basic
+  type errors, invalid local module arguments, and incompatible provider
+  mappings with source line and column diagnostics.
+- **Typed composition.** Structural object types, optional fields, checked
+  input forwarding, and typed components make reusable infrastructure
+  interfaces explicit.
+- **Safe compile-time reuse.** Constants, `static for`, and components reduce
+  repeated declarations without running arbitrary code or changing Terraform
+  resource identity.
+- **A gradual migration path.** Existing providers and Terraform modules remain
+  usable. Explicit resource and module labels preserve Terraform addresses, and
+  `moved` declarations cover intentional state migrations.
+
+InfraLang is currently an MVP, so it should be evaluated rather than adopted
+for production infrastructure today. Provider schemas are still validated by
+Terraform/OpenTofu, and `infralang check` does not replace `terraform validate`
+or reviewing a plan.
+
+### Syntax comparison
+
+The following configurations describe the same typed input, provider, S3
+bucket, tags, and output.
+
+Terraform HCL:
+
+```hcl
+terraform {
+  required_version = ">= 1.5.0"
+
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 6.0"
+    }
+  }
+}
+
+variable "region" {
+  type    = string
+  default = "eu-central-1"
+}
+
+variable "environment" {
+  type    = string
+  default = "development"
+
+  validation {
+    condition     = contains(["development", "staging", "production"], var.environment)
+    error_message = "environment must be development, staging, or production."
+  }
+}
+
+provider "aws" {
+  region = var.region
+}
+
+locals {
+  bucket_name = "application-${var.environment}"
+}
+
+resource "aws_s3_bucket" "application" {
+  bucket = local.bucket_name
+
+  tags = {
+    Name        = local.bucket_name
+    Environment = var.environment
+  }
+}
+
+output "bucket_id" {
+  value = aws_s3_bucket.application.id
+}
+```
+
+InfraLang:
+
+```infra
+terraform {
+  requiredVersion: ">= 1.5.0",
+}
+
+provider AWS from "hashicorp/aws" version "~> 6.0"
+
+input region: string = "eu-central-1"
+input environment: string = "development" with {
+  validate contains(["development", "staging", "production"], environment)
+    else "environment must be development, staging, or production.",
+}
+
+configure aws = AWS({ region })
+
+let bucketName = f"application-{environment}"
+
+resource bucket = aws.s3Bucket("application", {
+  bucket: bucketName,
+  tags: {
+    "Name": bucketName,
+    "Environment": environment,
+  },
+})
+
+output bucketId = bucket.id
+```
+
+The quoted label `"application"` still produces the Terraform address
+`aws_s3_bucket.application`. The source handle `bucket` is only the concise
+InfraLang name, so renaming that handle does not rename the managed resource.
+Unquoted source fields such as `bucketName` become Terraform-style
+`bucket_name` keys when emitted, while quoted map keys keep their exact spelling.
+
+### Larger example: parameterized components
+
+Components package repeated infrastructure structure behind typed parameters
+and explicit provider slots. This example creates the same four-resource S3
+storage stack for development and production, while allowing each instance to
+have a different label, bucket name, versioning policy, and tags:
+
+```infra
+terraform {
+  requiredVersion: ">= 1.5.0",
+}
+
+provider AWS from "hashicorp/aws" version "~> 6.0"
+
+input region: string = "eu-central-1"
+input bucketPrefix: string with {
+  description: "Globally unique prefix shared by application buckets.",
+}
+
+configure aws = AWS({ region })
+
+type StorageConfig = object {
+  bucketName: string,
+  environment: string,
+  versioningEnabled?: bool = true,
+  tags?: map<string> = {},
+}
+
+const environments = {
+  development: {
+    label: "app_development",
+    suffix: "development",
+    versioningEnabled: false,
+  },
+  production: {
+    label: "app_production",
+    suffix: "production",
+    versioningEnabled: true,
+  },
+}
+
+component ApplicationStorage(label: string, config: StorageConfig) using {
+  aws: AWS,
+} {
+  let tags = merge(config.tags, {
+    "Environment": config.environment,
+    "ManagedBy": "InfraLang",
+  })
+
+  resource bucket = aws.s3Bucket(label, {
+    bucket: config.bucketName,
+    tags: tags,
+  })
+
+  resource versioning = aws.s3BucketVersioning(f"{label}_versioning", {
+    bucket: bucket.id,
+    versioningConfiguration: {
+      status: config.versioningEnabled ? "Enabled" : "Suspended",
+    },
+  })
+
+  resource encryption = aws.s3BucketServerSideEncryptionConfiguration(
+    f"{label}_encryption",
+    {
+      bucket: bucket.id,
+      rule: {
+        applyServerSideEncryptionByDefault: {
+          sseAlgorithm: "AES256",
+        },
+      },
+    },
+  )
+
+  resource publicAccess = aws.s3BucketPublicAccessBlock(
+    f"{label}_public_access",
+    {
+      bucket: bucket.id,
+      blockPublicAcls: true,
+      blockPublicPolicy: true,
+      ignorePublicAcls: true,
+      restrictPublicBuckets: true,
+    },
+  )
+
+  export id = bucket.id
+  export arn = bucket.arn
+}
+
+static for key, environment in environments {
+  instantiate storage[key] = ApplicationStorage(
+    label: environment.label,
+    config: {
+      bucketName: f"{bucketPrefix}-{environment.suffix}",
+      environment: environment.suffix,
+      versioningEnabled: environment.versioningEnabled,
+      tags: {
+        "Application": "customer-portal",
+      },
+    },
+  ) using {
+    aws: aws,
+  }
+}
+
+output developmentBucketId = storage["development"].id
+output productionBucketArn = storage["production"].arn
+```
+
+`StorageConfig` checks every component call and supplies defaults for optional
+fields. `ApplicationStorage` can use only the provider configurations supplied
+through its `using` contract. The `static for` loop expands deterministically
+at compile time, while indexed component handles expose typed exports to the
+rest of the program. Components and indexes disappear from generated Terraform
+JSON; the resulting resources retain explicit addresses such as
+`aws_s3_bucket.app_development` and `aws_s3_bucket.app_production`.
+
 ## Build
 
 ```shell

@@ -1,49 +1,53 @@
 ---
 name: infralang
-description: InfraLang and .infra files: create, explain, review, debug, compile, and validate InfraLang infrastructure code and its Terraform JSON output. Use when a task mentions InfraLang, .infra syntax, providers, resources, data sources, modules, inputs, outputs, moved state, or changes to the InfraLang lexer, parser, compiler, or CLI.
+description: InfraLang and .infra files: create, explain, review, debug, compile, and validate InfraLang infrastructure code and its Terraform JSON output. Use for InfraLang syntax, types, constants, static loops, components, providers, resources, data sources, modules, inputs, outputs, moved state, or changes to the lexer, parser, compiler, project loader, or CLI.
 ---
 
 # InfraLang
 
-Use this skill to work with InfraLang source and the compiler that lowers it to Terraform JSON. InfraLang is an MVP frontend for Terraform/OpenTofu, not a replacement for their graph, state, provider, plan, or apply behavior.
+Use this skill for InfraLang source and for the Go compiler that lowers `.infra` files to deterministic Terraform JSON. InfraLang is a statically checked frontend for Terraform/OpenTofu. It does not replace their provider schemas, graph, version solver, state, plan, or apply behavior.
 
 ## Source Of Truth
 
 Resolve ambiguity in this order:
 
-1. `internal/syntax/lexer.go`, `internal/syntax/parser.go`, and `internal/syntax/token.go` for accepted syntax.
-2. `internal/compiler/compiler.go` for validation and Terraform lowering.
-3. Tests in `internal/syntax/`, `internal/compiler/`, and `cmd/infralang/` for executable behavior.
-4. `docs/language.md` and `README.md` for the public contract.
-5. `examples/` for established usage patterns.
+1. `internal/syntax/lexer.go`, `internal/syntax/parser.go`, `internal/syntax/ast.go`, and `internal/syntax/token.go` for accepted syntax.
+2. `internal/compiler/` for preparation, validation, component expansion, interfaces, and Terraform lowering.
+3. `internal/project/` for type imports, local-module graphs, directory builds, and path security.
+4. Tests in `internal/syntax/`, `internal/compiler/`, `internal/project/`, and `cmd/infralang/` for executable behavior.
+5. `docs/language.md` and `README.md` for the public contract.
+6. `examples/` for established usage patterns.
 
 Do not treat generated `*.tf.json` files as authoritative. They are ignored artifacts and may be stale.
 
 Before editing `.infra` code:
 
-- Read the complete target module and its callers or child modules.
-- Preserve quoted Terraform labels and `moved` addresses unless the task explicitly changes state addresses.
-- Reuse the naming, metadata, and provider-passing style already present nearby.
-- Prefer the smallest valid change; do not introduce imagined syntax from Terraform HCL or another language.
+- Read all immediate `.infra` files in the target directory because they form one module.
+- Read relevant callers, local child modules, imported type files, and component definitions.
+- Preserve explicit Terraform labels, provider aliases, module sources, and `moved` addresses unless the task intentionally changes state identity.
+- Reuse nearby source/wire naming, metadata, and provider-passing style.
+- Prefer the smallest valid change. Do not invent syntax from Terraform HCL or another language.
 
 ## Mental Model
 
-The pipeline is:
+InfraLang has three cumulative composition phases: source ergonomics, structural typing with checked local-module interfaces, and compile-time composition with reusable components.
 
 ```text
-.infra source
-  -> lexer and parser
-  -> symbol and basic type checks
+.infra files
+  -> lexing and parsing
+  -> project loading and compile-time preparation
+     (type imports, constants, static loops, labels, indexed handles, components)
+  -> symbol, structural-type, and local-module-interface checks
   -> Terraform expression lowering
-  -> .tf.json
+  -> deterministic .tf.json
   -> Terraform/OpenTofu validate, plan, and apply
 ```
 
-InfraLang statically checks what it knows. Provider schemas, provider attributes, many member/index expressions, module outputs, and Terraform function names remain dynamic. A successful `infralang check` does not replace `terraform validate`.
+Compile-time constructs are elaborated and erased. They never become custom Terraform blocks or runtime providers.
 
-## Declaration Syntax
+InfraLang checks structural object members and local InfraLang module inputs, outputs, provider slots, and cycles when their shape is known. Provider schemas, remote-module interfaces, Terraform-only child directories, arbitrary provider attributes, and arbitrary Terraform function names remain Terraform's responsibility. `infralang check` does not replace `terraform validate`.
 
-The following example shows the supported top-level declaration forms:
+## Core Declarations
 
 ```infra
 terraform {
@@ -58,13 +62,8 @@ input region: string = "eu-central-1" with {
 
 let name = f"application-{region}"
 
-configure aws = AWS({
-  region: region,
-})
-
-configure awsEast = AWS("east", {
-  region: "us-east-1",
-})
+configure aws = AWS({ region })
+configure awsEast = AWS("east", { region: "us-east-1" })
 
 data zones = aws.availabilityZones("available", {
   state: "available",
@@ -72,18 +71,14 @@ data zones = aws.availabilityZones("available", {
 
 resource bucket = aws.s3Bucket("application", {
   bucket: name,
-  tags: {
-    "Name": name,
-  },
+  tags: { "Name": name },
 }, {
   dependsOn: [],
-  lifecycle: {
-    preventDestroy: true,
-  },
+  lifecycle: { preventDestroy: true },
 })
 
 module child "child" from "./modules/child" {
-  region: region,
+  region,
 } using {
   aws: awsEast,
 } with {
@@ -103,29 +98,62 @@ Declaration rules:
 - `provider` source and version are literal strings.
 - `configure name = Provider({...})` creates the default provider configuration.
 - `configure name = Provider("alias", {...})` creates an aliased configuration.
-- `configure name = Provider` declares an inherited provider handle in a child module and emits no provider block.
-- `resource` and `data` use the configured provider handle, not the provider declaration name.
-- Resource and data Terraform labels are the first literal string in the constructor call. Keep them stable to preserve state addresses.
+- `configure name = Provider` declares an inherited provider slot in a child module and emits no provider block.
+- Resources and data sources use configured provider handles, not provider declaration names.
 - A resource accepts an optional third object for Terraform meta-arguments. A data source does not.
-- A module has both an InfraLang symbol and a separate quoted Terraform label: `module sourceName "terraform_label" ...`.
-- Module `using` maps child provider configuration names to parent handles.
-- Module `with` holds meta-arguments such as `forEach` and `dependsOn`.
-- `moved` uses literal Terraform addresses. Its source commonly refers to infrastructure no longer declared in source.
+- A module has an InfraLang handle and a separate Terraform label: `module sourceName labelExpression from source arguments`.
+- Module `using` maps child provider slot names to parent configuration handles. Array shorthand such as `using [aws]` infers each child slot from the configuration's provider local name; it equals `using { aws: aws }` only when that inferred name and the handle are both `aws`.
+- Module `with` holds Terraform meta-arguments such as `forEach` and `dependsOn`.
 - Declarations are order-independent and may be separated by whitespace or semicolons.
 
 ## Lexical Rules
 
-- Source identifiers start with an ASCII letter or `_`, followed by letters, digits, or `_`.
-- Static Terraform labels may additionally contain `-`, but cannot be computed.
-- Strings use double quotes and Go-style escapes.
-- Comments may use `#`, `//`, or `/* ... */`.
+- Identifiers start with an ASCII letter or `_`, followed by ASCII letters, digits, or `_`.
+- Strings use double quotes and Go-style escapes. Backticks are reserved for raw Terraform addresses in grouped `moved` declarations.
+- Comments use `#`, `//`, or `/* ... */`.
 - Function arguments and array items require commas when multiple values are present.
-- Object fields may be comma- or semicolon-separated; use trailing commas for readable multiline objects.
-- Supported literals are strings, numbers, `true`, `false`, and `null`. Prefer documented `null` over the accepted legacy synonym `none`.
+- Object items may be comma- or semicolon-separated; prefer trailing commas in multiline objects.
+- Literals are strings, exact decimal numbers, `true`, `false`, and `null`. The lexer still accepts legacy `none` as null, but use `null` in new code.
+
+## Source And Wire Names
+
+InfraLang distinguishes source identifiers used in expressions from names emitted to Terraform.
+
+An unaliased top-level input preserves its exact identifier as both names. Use a quoted alias when they differ:
+
+```infra
+input imageId "image_id": string
+let selected = imageId
+```
+
+The source identifier is `imageId`; the Terraform variable is `image_id`. Adding or changing an input alias changes the Terraform interface.
+
+In every object context, an unquoted key has an identifier-style source name and a snake_case wire name. Quoted keys preserve their exact wire spelling and are accessed by string index. Structural object fields may declare an explicit wire alias:
+
+```infra
+type Image = object {
+  imageId "image_id": string,
+  diskSizeGib: number,
+  "ApplicationName": string,
+}
+
+let image = {
+  imageId: "ami-123",
+  diskSizeGib: 20,
+  "ApplicationName": "api",
+}
+
+output id = image.imageId
+output tag = image["ApplicationName"]
+```
+
+This rule applies recursively to locals, outputs, defaults, metadata, provider arguments, resource arguments, module arguments, and structural types. Quote arbitrary map keys when spelling or case must survive. Avoid duplicate wire keys after conversion.
+
+Provider method names use the same conversion: `aws.s3Bucket` becomes `aws_s3_bucket`, and `lvm.logicalVolume` becomes `lvm_logical_volume`.
 
 ## Types And Metadata
 
-Supported input types:
+Inputs, constants, component parameters, and object fields support:
 
 ```infra
 string
@@ -137,45 +165,54 @@ set<T>
 map<T>
 optional<T>
 object {
-  required_field: string,
-  optional_field?: number,
-  defaulted_field?: number = 1024,
+  requiredField: string,
+  optionalField?: number,
+  defaultedField?: number = 1024,
 }
 ```
 
 Use `dynamic` when no stronger type is available. Do not use the implementation alias `any` in new public examples.
 
-Input defaults and object-field defaults must be compile-time constants. Object-field defaults are allowed only on fields marked `?`.
-
-`optional<T>` without an explicit top-level input default lowers to a nullable Terraform variable with `default = null` and Terraform type `T`:
+Named aliases are structural, not nominal:
 
 ```infra
-input cpu_mode: optional<string> with {
-  description: "Optional CPU mode.",
-  nullable: true,
+export type Machine = object {
+  ipAddress "ip_address": string,
+  memory?: number = 1024,
+}
+
+type Fleet = map<Machine>
+input machines: Fleet
+```
+
+`type` is local to the directory module. `export type` can be imported with `import type`. Alias cycles and duplicate source or wire fields are rejected.
+
+Input defaults and optional object-field defaults must reduce to compile-time constants. References to `const` values are allowed; runtime inputs, locals, resources, modules, component instances, Terraform functions, and other runtime values are not. Object-field defaults require `?`.
+
+A direct top-level `optional<T>` input without an explicit default emits Terraform type `T` and `default = null`. It is nullable input behavior, not a general union type.
+
+Input metadata supports `description`, `sensitive`, `nullable`, and validations. Output metadata supports `description` and `sensitive`.
+
+```infra
+input hostname: string with {
+  description: "VM hostname.",
+  validate length(trimspace(hostname)) > 0 else "hostname must not be empty.",
   validations: [{
-    condition: cpu_mode == null || contains(["host-model", "host-passthrough"], cpu_mode),
-    errorMessage: "cpu_mode must be a supported mode.",
+    condition: length(hostname) <= 63,
+    errorMessage: "hostname must contain at most 63 characters.",
   }],
 }
 ```
 
-Input metadata supports:
+Concise validation messages must be static strings. Multiple concise and legacy validations preserve source order.
 
-- `description`
-- `sensitive`
-- `nullable`
-- `validations`, an array of `{ condition, errorMessage }` objects
+## Objects And Expressions
 
-Output metadata supports `description` and `sensitive`.
+Runtime expressions support:
 
-## Expressions
-
-InfraLang supports:
-
-- Literal arrays and objects.
+- Strings, numbers, booleans, `null`, arrays, and objects.
 - Member access and indexing: `vm.id`, `vms[hostname]`.
-- Direct Terraform function calls: `merge`, `concat`, `yamlencode`, `length`, and others.
+- Terraform function calls such as `merge`, `concat`, `yamlencode`, and `length`.
 - Unary `!` and `-`.
 - Arithmetic, comparison, equality, and boolean operators.
 - Null coalescing with `??`.
@@ -185,90 +222,207 @@ InfraLang supports:
 
 ```infra
 let enabledNames = [for name, machine in machines: name if machine.enabled]
-let addresses = {for name, machine in machines: name => machine.ip_address}
+let addresses = {for name, machine in machines: name => machine.ipAddress}
 let displayName = f"service-{environment}"
 ```
 
-Regular strings are always literal. Use `f"...{expression}..."` for interpolation and `{{` or `}}` for literal braces inside formatted strings.
+Regular strings are literal. Use `f"...{expression}..."` for interpolation and `{{` or `}}` for literal braces.
 
-Operator precedence from lowest to highest is conditional, `??`, `||`, `&&`, equality, ordering, `+`/`-`, `*`/`/`/`%`, unary, then member/index/call postfix operations.
-
-Use compiler-special `address()` for static Terraform traversals that must not become ordinary strings:
+Object items are evaluated in source order. Later fields and spreads override earlier wire keys:
 
 ```infra
-lifecycle: {
-  ignoreChanges: [address("devices.consoles[0].source.pty.path")],
+let config = {
+  ...defaults,
+  region,
+  memory: 2048,
+  qemuGuestAgentEnabled: true when installAgent,
 }
 ```
 
-Pass exactly one literal string to `address()`.
+- `{ region }` is object punning for `{ region: region }`.
+- `...value` requires an object-compatible value.
+- `field: value when condition` conditionally contributes a field and requires a boolean condition.
+- Compile-time false fields disappear during preparation; runtime conditions lower through Terraform merge semantics.
 
-## Terraform Lowering
+Operator precedence from lowest to highest is conditional, `??`, `||`, `&&`, equality, ordering, `+`/`-`, `*`/`/`/`%`, unary, then member/index/call postfix operations.
 
-InfraLang references lower as follows:
+`address("...")` marks a static Terraform traversal wherever the expression is rendered; its intended use is traversal metadata such as `lifecycle.ignoreChanges`. Use exactly one literal-string argument. The compiler recognizes that specific shape; otherwise a call named `address` follows ordinary expression lowering.
+
+## Resources And Runtime Iteration
+
+Resource metadata includes `count`, `forEach`, `dependsOn`, `lifecycle`, and other Terraform resource meta-arguments:
+
+```infra
+resource vm = libvirt.domain("vm", {
+  name: each.key,
+  memory: each.value.memory,
+}, {
+  forEach: machines,
+  dependsOn: [network],
+  lifecycle: {
+    ignoreChanges: [address("devices.consoles[0].source.pty.path")],
+  },
+})
+```
+
+The compiler provides typed `each.key` and `each.value` inside both resource and module declarations with `forEach`. For `map<T>`, the key is `string` and the value is `T`. Runtime `forEach` accepts `set<string>`, where both fields are `string`; other set element types are rejected. `each` is unavailable outside such a declaration and while evaluating its own `forEach` expression. `count.index` scope is not currently installed.
+
+A conditional resource uses `when`:
+
+```infra
+resource optional = terraform.data("optional", {
+  input: "value",
+}) when enabled
+```
+
+`when condition` lowers to `count = condition ? 1 : 0`, conflicts with explicit `count` or `forEach`, and makes the resource collection-shaped. Index it before direct attribute access or iterate over it.
+
+## Local Modules
+
+All immediate `.infra` files in one directory form one InfraLang module. Local child sources beginning with `.` are recursively loaded when their canonical directory contains `.infra` files.
+
+Checked local interfaces include:
+
+- Required, optional, and unknown child inputs.
+- Input structural assignability and child wire names.
+- Available child outputs.
+- Provider slot names and provider source identities.
+- Cycles between local modules.
+
+Remote registry modules, remote URLs, and local Terraform-only directories are unchecked interface boundaries. Terraform resolves those sources and provider mappings.
+
+Use `...inputs(value)` only inside a module argument object to forward a statically known structural object:
+
+```infra
+module child "child" from "./child" {
+  ...inputs(config),
+  hostname: overrideName,
+} using [libvirt, lvm]
+```
+
+The current compiler matches forwarded object wire keys to child input wire names. Use explicit source/wire aliases when parent field spelling and a legacy child input name would otherwise lower differently. Later explicit arguments override earlier forwarded fields. Unknown, missing, duplicate, and incompatible fields are diagnosed. This is not a general object spread.
+
+Directory builds emit `main.tf.json` for all modules only after project-wide compilation succeeds. Diagnostics produce no partial artifacts. A child directory with only Terraform `.tf` files remains Terraform's responsibility.
+
+## Compile-Time Composition
+
+### Constants
+
+```infra
+const retryCount: number = 2 + 3
+const environments = {
+  production: { label: "prod" },
+  staging: { label: "staging" },
+}
+```
+
+Constants may reference other constants and static loop bindings. Values include null, booleans, strings, exact decimal numbers, lists, and objects. Operators, conditionals, formatted strings, member/index access, spreads, conditional fields, and comprehensions are evaluated without floating-point rounding. Non-finite decimal JSON results such as `1 / 3` are rejected.
+
+Function calls and runtime declarations are unavailable during constant evaluation. Dependency cycles are diagnosed.
+
+### Static Loops And Indexed Handles
+
+The following fragment assumes the provider and child module declarations used by the surrounding project:
+
+```infra
+static for key, environment in environments {
+  configure providers[key] = Null({})
+  module children[key] environment.label from "./child" {} using {
+    "null": providers[key],
+  }
+}
+
+output stagingId = children["staging"].id
+```
+
+`static for value in list` preserves list order and optionally exposes a zero-based exact numeric index. Object iteration uses lexically sorted wire keys. Nested loops are supported.
+
+Static loops determine declaration cardinality during InfraLang compilation. Resource/module `forEach` determines instance cardinality during Terraform evaluation and exposes `each`.
+
+Resource/data labels, module labels, and indexed-handle keys may use compile-time expressions. Labels must resolve to non-empty valid Terraform identifier strings; runtime values are rejected. Provider indexes must be compile-time strings and become provider aliases. Module and component indexes may be compile-time strings or exact numbers. Numerically equal indexes such as `1` and `1.0` are the same key.
+
+Indexed provider, module, and component handles are static symbol tables. They do not emit Terraform `for_each`, `count`, index syntax, or wrapper modules.
+
+### Type-Only Imports
+
+```infra
+import type { CommonConfig, Machine as HostMachine } from "./types.infra"
+```
+
+Only `export type` aliases can be imported. Type imports add no runtime values or side effects. Paths must be relative `.infra` files, canonicalize inside the project root, and cannot escape through `..` or symlinks. Absolute paths, remote URLs, extension guessing, environment-dependent searches, duplicate imports, missing exports, name collisions, and cycles are rejected.
+
+Type imports require project/directory compilation; standalone compilation cannot resolve them.
+
+### Components
+
+A component is a typed, directory-scoped declaration template. This fragment assumes the referenced types, providers, and child module exist in the surrounding directory project:
+
+```infra
+component HostDeployment(label: string, config: HostConfig) using {
+  libvirt: Libvirt,
+  lvm: Lvm,
+} {
+  module host label from "./modules/libvirt_host" {
+    ...inputs(config),
+  } using [libvirt, lvm]
+
+  export vms = host.vms
+}
+
+instantiate hosts["db1"] = HostDeployment(
+  label: "host_db1",
+  config: db1Config,
+) using {
+  libvirt: libvirtHosts["db1"],
+  lvm: lvmHosts["db1"],
+}
+
+output db1 = hosts["db1"].vms["db1"]
+```
+
+Arguments are checked by name and structural type. Provider slots are checked by provider source identity. Component exports are virtual typed handles; they emit no Terraform outputs unless the caller declares an `output`.
+
+Expansion is hygienic for source handles and bindings, but explicit Terraform labels and provider aliases are not silently prefixed. Components add no state namespace. Duplicate expanded Terraform addresses and direct or indirect component recursion are rejected.
+
+## Terraform Lowering And Identity
 
 | InfraLang declaration | Terraform reference |
 | --- | --- |
-| `input name` | `var.name` |
+| `input source "wire_name"` | `var.wire_name` |
 | `let name` | `local.name` |
 | `resource item = aws.s3Bucket("label", ...)` | `aws_s3_bucket.label` |
 | `data item = aws.availabilityZones("label", ...)` | `data.aws_availability_zones.label` |
 | `module child "stable" ...` | `module.stable` |
 
-Provider method names become snake_case resource types. For example, `libvirt.domain` becomes `libvirt_domain` and `lvm.logicalVolume` becomes `lvm_logical_volume`.
+Constant values that reach ordinary declarations become native JSON. Runtime expressions become Terraform JSON interpolation expressions. Do not manually write Terraform interpolation syntax in ordinary InfraLang strings.
 
-Unquoted object keys passed to provider configurations, resources, and modules are recursively converted from camelCase to snake_case. Quoted keys are preserved:
+Terraform resource and module state addresses come from resource/data type plus label, module label, and runtime `count`/`for_each` keys. Provider configurations have separate identity from provider source plus alias and are recorded in state, but the source is not textually part of a resource address. Source handles, constants, iterator names, component names, parameters, and component instance handles do not create Terraform identity.
+
+Changing an explicit label, provider alias, static key used as a label/alias, or runtime cardinality can change state addresses. Changing a provider source rebinds provider configuration identity without textually renaming resource addresses. Changing a module source does not rename the `module.<label>` call itself, but can replace the infrastructure and nested addresses behind that call. InfraLang does not infer migrations from source renames. Review generated addresses and add explicit `moved` declarations when state should follow an intentional change.
+
+Both moved forms are supported:
 
 ```infra
-{
-  memoryUnit: "MiB",          # emits memory_unit
-  tags: {
-    "ApplicationName": name, # preserved exactly
-  },
+moved from "module.old" to "module.current"
+
+moved {
+  `module.old["api"]` -> `module.current["api"]`,
+  `null_resource.old` -> `terraform_data.current`,
 }
 ```
 
-Quote arbitrary map keys whenever spelling or case must survive. Avoid pairs that collide after snake_case conversion.
+Raw moved addresses are not interpolated or resolved as InfraLang symbols.
 
-Constant values become native JSON. Expressions become Terraform JSON interpolation expressions. Do not manually write Terraform interpolation syntax in ordinary InfraLang strings.
-
-## Modules And Directories
-
-All immediate `.infra` files in one directory form one InfraLang module. Directory commands recursively process local module sources beginning with `.` when the child directory itself contains `.infra` files.
-
-```shell
-bin/infralang check examples/staging
-bin/infralang build examples/staging
-```
-
-Each compiled directory receives `main.tf.json`. A local or remote module containing only Terraform `.tf` files remains Terraform's responsibility.
-
-Use `each.key` and `each.value` in module arguments only when that module declaration has `forEach`:
-
-```infra
-module vm "vm" from "../libvirt_vm" {
-  hostname: each.key,
-  config: each.value,
-} using {
-  libvirt: libvirt,
-} with {
-  forEach: machines,
-  dependsOn: [network],
-}
-```
-
-Current MVP limitation: the compiler installs `each` scope for module `forEach`, but not for resource `forEach`, and it does not install `count.index` scope.
+Constants, static loops, aliases, imports, components, instances, virtual exports, indexed-handle tables, and provenance never survive into Terraform JSON. Recompiling unchanged source produces byte-stable artifacts.
 
 ## CLI Workflow
 
-Build the current compiler before relying on its result:
+Build the current compiler before relying on local results:
 
 ```shell
 mkdir -p bin
 go build -o bin/infralang ./cmd/infralang
 ```
-
-Use the CLI as follows:
 
 ```shell
 bin/infralang check SOURCE.infra
@@ -278,18 +432,22 @@ bin/infralang build MODULE_DIR
 bin/infralang build -stdout SOURCE.infra
 bin/infralang build -o OUTPUT.tf.json SOURCE.infra
 bin/infralang version
+bin/infralang help
 ```
 
-Place build flags before the source path. `-o` and `-stdout` are mutually exclusive and apply only to single-file builds.
+Place build flags before the source path. `-o` and `-stdout` are mutually exclusive and apply only to single-file `.infra` builds. `-h`, `--help`, `-version`, and `--version` are accepted aliases.
 
-For `.infra`-only edits:
+Diagnostics are sorted and printed with file, line, column, message, source-line context, and a caret. Internal diagnostic codes are not printed by the CLI. Parse errors stop compiler execution, and any diagnostic prevents artifact emission.
 
-1. Run `bin/infralang check PATH` first because it performs compilation without writing generated files.
-2. Inspect output with `bin/infralang build -stdout FILE.infra` for a single source file.
-3. Build a module directory only when generated artifacts are needed for Terraform/OpenTofu validation.
-4. Run `terraform validate` or `tofu validate` when provider/module semantics matter and the required tooling is available.
+For `.infra` edits:
 
-For compiler, parser, lexer, or CLI changes:
+1. Run `bin/infralang check PATH`; it compiles without writing generated files.
+2. For one file, inspect exact output with `bin/infralang build -stdout FILE.infra`.
+3. For imports and checked local modules, validate the directory/project instead of an isolated file.
+4. Build a directory only when generated artifacts are needed.
+5. Run `terraform validate` or `tofu validate` when provider or remote-module semantics matter and tooling is available.
+
+For lexer, parser, compiler, project loader, or CLI changes:
 
 ```shell
 go test ./...
@@ -298,31 +456,35 @@ go build -o bin/infralang ./cmd/infralang
 bin/infralang check RELEVANT_PATH
 ```
 
-Add or update focused tests for new syntax, diagnostics, type rules, CLI behavior, and exact Terraform JSON lowering. Run Terraform validation integration tests where relevant.
+Add focused tests for syntax, diagnostics, compile-time preparation, structural types, local interfaces, component hygiene, state identity, CLI behavior, and exact Terraform JSON lowering. Run Terraform validation integration tests when relevant.
 
 ## Safety And Pitfalls
 
 - Never run `terraform apply` or `tofu apply` unless the user explicitly requests and approves real infrastructure changes.
-- Treat plan operations, provider initialization, and storage examples as potentially environment-affecting. The LVM example can manage real logical volumes.
-- Do not edit state files, `.terraform/`, lock files, or ignored generated JSON unless the task explicitly requires it.
-- Preserve secrets: never expose provider credentials, variable values, state content, or authorization headers.
-- Do not infer that `infralang check` validates provider field names or arbitrary Terraform function names.
+- Treat `init`, plan operations, provider initialization, and storage examples as environment-affecting. The LVM example can manage real logical volumes.
+- Do not edit state, `.terraform/`, lock files, or ignored generated JSON unless explicitly required.
+- Never expose provider credentials, authorization headers, sensitive variable values, state content, or secrets from generated artifacts.
+- Do not place secrets in source. Compiler type errors redact sensitive values, but CLI diagnostics echo the offending source line.
+- Do not infer that `infralang check` validates provider field names, remote-module interfaces, or arbitrary Terraform functions.
 - Do not put resource meta-arguments on `data` declarations.
-- Do not use references or function calls as input or object-field defaults; defaults must be constant.
-- Do not rename quoted resource, data, or module labels casually. Source symbol renames and Terraform address changes are separate concerns.
-- Use `moved` blocks when an intentional Terraform address change must preserve existing state.
-- Quote arbitrary nested map keys; unquoted keys are recursively snake-cased.
-- Remember that a top-level `optional<T>` is nullable input behavior, not a general union type.
-- Keep unsupported roadmap syntax out of `.infra` files: there are currently no imports, user-defined functions, components, formatter directives, native Terraform tests, or provider-schema-generated types.
+- Defaults may use compile-time constants, but never runtime references or function calls.
+- Preserve explicit resource, data, and module labels unless state identity should change.
+- Use `moved` when an intentional address change must preserve state.
+- Quote arbitrary map keys; all unquoted object keys are recursively converted to snake_case wire keys.
+- Compile-time evaluator and control expressions cannot read files or environment variables, execute commands, access networks, query providers or state, or call Terraform functions. Ordinary runtime expressions inside components and expanded declarations may describe Terraform functions such as `file()`, but InfraLang does not execute them.
+- Keep unsupported roadmap syntax out of `.infra`: there are no user-defined runtime functions, formatter directives, language server features, native Terraform tests, or provider-schema-generated types.
 
 ## Canonical References
 
-- Language guide: `docs/language.md`
+- Public language contract: `docs/language.md`
 - Project overview and CLI examples: `README.md`
-- Lexer and parser: `internal/syntax/lexer.go`, `internal/syntax/parser.go`
-- AST and tokens: `internal/syntax/ast.go`, `internal/syntax/token.go`
-- Compiler and lowering: `internal/compiler/compiler.go`
-- CLI and directory compilation: `cmd/infralang/main.go`
-- End-to-end module example: `examples/staging/`
+- Lexer, parser, AST, tokens: `internal/syntax/`
+- Core compiler and lowering: `internal/compiler/compiler.go`
+- Compile-time preparation: `internal/compiler/elaborate.go`, `internal/compiler/elaborate_tree.go`
+- Components and indexed instances: `internal/compiler/components.go`
+- Structural types and local interfaces: `internal/compiler/types.go`, `internal/compiler/interfaces.go`
+- Project graph and imports: `internal/project/graph.go`, `internal/project/imports.go`, `internal/project/project.go`
+- CLI and directory artifact writing: `cmd/infralang/main.go`
+- End-to-end typed component example: `examples/staging/`
 - Small language example: `examples/basic/main.infra`
 - Provider alias example: `examples/provider-alias/`
