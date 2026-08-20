@@ -1,0 +1,140 @@
+version: 1
+extends: _base
+workflow:
+  env:
+    AGENT_BROWSER_SCREENSHOT_DIR: "[%WORKDIR%]/.screenshots"
+    IS_SANDBOX: 1
+  steps:
+    - name: Run agent
+      uses: run-agent
+      env:
+        RUN_AGENT_FLAGS: ""
+        RUN_AGENT_OUTPUT_DIR: .agentis/outputs
+      outputs:
+        - type: agent_comment
+          bodyFrom: .agentis/outputs/final-comment.md
+          status: in_review
+        - type: session_id
+          valueFrom: .agentis/outputs/session-id
+
+    - name: Commit changes
+      run: |
+        git add -A
+        if git diff --cached --quiet; then
+          echo "Žádné změny ke commitnutí."
+        else
+          git -c user.name=Agentis -c user.email=code@agentis.cz \
+            commit -m "TASK: #${TASK_NUMBER} - ${TASK_TITLE}"
+        fi
+
+    - name: Create pull request
+      run: |
+        mkdir -p .agentis/outputs
+        rm -f .agentis/outputs/pull-request-url
+        if [ -z "$GITHUB_REPO" ]; then
+          echo "Bez GitHub repozitáře, pull request se přeskakuje."
+          exit 0
+        fi
+        if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+          if ! git pull --rebase origin "$BRANCH"; then
+            git rebase --abort >/dev/null 2>&1 || true
+            echo "Nepodařilo se stáhnout remote větev ${BRANCH}: rebase skončil konfliktem."
+            exit 1
+          fi
+        fi
+        git fetch origin "$BASE_BRANCH"
+        if [ "$(git rev-list --count FETCH_HEAD..HEAD)" -eq 0 ]; then
+          echo "Žádné commity oproti ${BASE_BRANCH}, pull request se přeskakuje."
+          exit 0
+        fi
+        git push --set-upstream origin "${BRANCH}:refs/heads/${BRANCH}"
+        if gh pr view "$BRANCH" --json url --jq .url >.agentis/outputs/pull-request-url 2>/dev/null; then
+          echo "Pull request už existuje: $(cat .agentis/outputs/pull-request-url)"
+        else
+          gh pr create --base "$BASE_BRANCH" --head "$BRANCH" \
+            --title "${TASK_TITLE:-$BRANCH}" \
+            --body "${TASK_TITLE:-$BRANCH}" \
+            >.agentis/outputs/pull-request-url
+        fi
+        if [ -s .agentis/outputs/pull-request-url ]; then
+          pr_url="$(cat .agentis/outputs/pull-request-url)"
+          printf '%s/changes\n' "${pr_url%/}" >.agentis/outputs/pull-request-url
+        fi
+      outputs:
+        - label: Pull Request
+          type: url
+          valueFrom: .agentis/outputs/pull-request-url
+        - type: var
+          name: PR_CREATED
+          valueFrom: .agentis/outputs/pull-request-url
+
+    - name: Auto merge rebase task branch
+      if: PR_CREATED && AGENTIS_AUTO_MERGE
+      run: |
+        mkdir -p .agentis/outputs
+        git fetch origin "$BASE_BRANCH"
+        if ! git rebase "refs/remotes/origin/${BASE_BRANCH}"; then
+          opencode run --model openai/gpt-5.5 "fix git conflict" \
+            | tee .agentis/outputs/auto-merge-conflict-resolution.txt
+          if ! GIT_EDITOR=true git rebase --continue; then
+            git rebase --abort
+            exit 1
+          fi
+        fi
+    - name: Auto merge fast-forward base branch
+      if: PR_CREATED && AGENTIS_AUTO_MERGE
+      workingDir: "[%MAIN_DIR%]"
+      run: |
+        if ! git rebase "$BRANCH"; then
+          git stash push
+          git rebase "$BRANCH"
+          git stash pop
+        fi
+        git push origin "${BASE_BRANCH}:refs/heads/${BASE_BRANCH}"
+    - name: Auto merge final comment
+      if: PR_CREATED && AGENTIS_AUTO_MERGE
+      run: |
+        mkdir -p .agentis/outputs
+        {
+          printf 'Zamergoval jsem task větev do hlavní větve.\n'
+          if [ -s .agentis/outputs/auto-merge-conflict-resolution.txt ]; then
+            printf '\nMerge narazil na git conflict, který jsem řešil přes AI resolver.\n'
+          fi
+        } > .agentis/outputs/auto-merge-comment.md
+      outputs:
+        - type: agent_comment
+          bodyFrom: .agentis/outputs/auto-merge-comment.md
+          status: done
+          name: Merge agent
+    - name: Report auto merge failure
+      always: true
+      run: |
+        [ "${AGENTIS_WORKFLOW_STATUS:-success}" = "failed" ] || exit 0
+        mkdir -p .agentis/outputs
+        {
+          printf 'Auto merge task větve selhal v kroku "%s".\n' "$AGENTIS_FAILED_STEP"
+          if [ -s .agentis/outputs/auto-merge-conflict-resolution.txt ]; then
+            printf '\nRebase narazil na konflikt, který se nepodařilo vyřešit ani přes AI resolver; rebase byl zrušen (git rebase --abort) a task větev zůstává beze změny.\n'
+          fi
+        } > .agentis/outputs/auto-merge-failure-comment.md
+      outputs:
+        - type: agent_comment
+          bodyFrom: .agentis/outputs/auto-merge-failure-comment.md
+          name: Merge agent
+        - label: AI conflict resolver
+          type: text
+          valueFrom: .agentis/outputs/auto-merge-conflict-resolution.txt
+
+  # Followup akce nabídnuté v completion komentáři; každá dispatchne `start`
+  # s pojmenovaným workflow `.agentis/workflows/<workflow>.yaml`.
+  followups:
+    - title: Git merge
+      if: PR_CREATED
+      prompt: Sloučit změny z task větve do hlavní větve.
+      workflow: merge
+    - title: Code review
+      prompt: Udelej code review
+      workflow: code-review
+    - title: Zavřít prostředí
+      prompt: Uklidit prostředí, worktree a task větev.
+      workflow: close

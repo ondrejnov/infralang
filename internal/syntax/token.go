@@ -3,12 +3,36 @@ package syntax
 import (
 	"fmt"
 	"regexp"
+	"sort"
+	"strings"
+	"unicode"
 )
 
 var terraformIdentifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]*$`)
 
 func IsTerraformIdentifier(value string) bool {
 	return terraformIdentifier.MatchString(value)
+}
+
+var nonSourceIdentifier = regexp.MustCompile(`[^a-zA-Z0-9_]+`)
+
+func SourceNameToWire(value string) string {
+	value = nonSourceIdentifier.ReplaceAllString(value, "_")
+	var result strings.Builder
+	for index, current := range value {
+		if unicode.IsUpper(current) {
+			if index > 0 {
+				previous := rune(value[index-1])
+				if previous != '_' && (unicode.IsLower(previous) || unicode.IsDigit(previous)) {
+					result.WriteByte('_')
+				}
+			}
+			result.WriteRune(unicode.ToLower(current))
+		} else {
+			result.WriteRune(current)
+		}
+	}
+	return strings.Trim(result.String(), "_")
 }
 
 type Position struct {
@@ -18,9 +42,12 @@ type Position struct {
 }
 
 type Span struct {
+	File  FileID
 	Start Position
 	End   Position
 }
+
+type FileID string
 
 func (s Span) String() string {
 	return fmt.Sprintf("%d:%d", s.Start.Line, s.Start.Column)
@@ -29,7 +56,36 @@ func (s Span) String() string {
 type Diagnostic struct {
 	Filename string
 	Span     Span
+	Code     string
 	Message  string
+}
+
+func NewDiagnostic(file FileID, span Span, code, message string) Diagnostic {
+	if file == "" {
+		file = span.File
+	}
+	return Diagnostic{Filename: string(file), Span: span, Code: code, Message: message}
+}
+
+func SortDiagnostics(diagnostics []Diagnostic) []Diagnostic {
+	result := append([]Diagnostic(nil), diagnostics...)
+	sort.SliceStable(result, func(i, j int) bool {
+		left, right := result[i], result[j]
+		if left.Filename != right.Filename {
+			return left.Filename < right.Filename
+		}
+		if left.Span.Start.Offset != right.Span.Start.Offset {
+			return left.Span.Start.Offset < right.Span.Start.Offset
+		}
+		if left.Span.End.Offset != right.Span.End.Offset {
+			return left.Span.End.Offset < right.Span.End.Offset
+		}
+		if left.Code != right.Code {
+			return left.Code < right.Code
+		}
+		return left.Message < right.Message
+	})
+	return result
 }
 
 func (d Diagnostic) Error() string {
@@ -48,6 +104,7 @@ const (
 	TokenNumber
 	TokenString
 	TokenFString
+	TokenRawAddress
 	TokenLeftParen
 	TokenRightParen
 	TokenLeftBrace
@@ -57,9 +114,11 @@ const (
 	TokenColon
 	TokenComma
 	TokenDot
+	TokenEllipsis
 	TokenSemicolon
 	TokenAssign
 	TokenArrow
+	TokenFatArrow
 	TokenPlus
 	TokenMinus
 	TokenStar
@@ -96,6 +155,7 @@ func (k TokenKind) String() string {
 		TokenNumber:       "number",
 		TokenString:       "string",
 		TokenFString:      "interpolated string",
+		TokenRawAddress:   "raw address",
 		TokenLeftParen:    "(",
 		TokenRightParen:   ")",
 		TokenLeftBrace:    "{",
@@ -105,9 +165,11 @@ func (k TokenKind) String() string {
 		TokenColon:        ":",
 		TokenComma:        ",",
 		TokenDot:          ".",
+		TokenEllipsis:     "...",
 		TokenSemicolon:    ";",
 		TokenAssign:       "=",
-		TokenArrow:        "=>",
+		TokenArrow:        "->",
+		TokenFatArrow:     "=>",
 		TokenPlus:         "+",
 		TokenMinus:        "-",
 		TokenStar:         "*",

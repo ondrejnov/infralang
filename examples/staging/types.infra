@@ -1,0 +1,24 @@
+import type { HostCallConfig, VmConfig } from "./modules/libvirt_host/types.infra"
+
+type HostDefinition = object {
+  moduleLabel: string,
+  gateway: string,
+  remoteHost: string,
+  vms: map<VmConfig>,
+}
+
+type VmDefaults = object {
+  baseImagePath "base_image_path": string,
+  bootstrapRoot "bootstrap_root": string,
+  bridge: string,
+  cloudinitDirectory "cloudinit_directory": string,
+  cloudinitPool "cloudinit_pool": string,
+  interfaceName "interface_name": string,
+  mtu: number,
+  prefixLength "prefix_length": number,
+  remoteCertificatePath "remote_certificate_path"?: string = "~/.ssh/id_rsa-cert.pub",
+  remotePrivateKeyPath "remote_private_key_path"?: string = "~/.ssh/id_rsa",
+  remoteUser "remote_user"?: string = "root",
+  sshAuthorizedKeys "ssh_authorized_keys": list<string>,
+  volumeGroup "volume_group": string,
+}

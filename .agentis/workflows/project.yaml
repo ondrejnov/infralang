@@ -1,0 +1,16 @@
+version: 1
+extends: _base
+workflow:
+  image: registry.reactis.cloud/infrabot:0.1
+  context: microk8s
+  imagePullSecrets:
+    - name: registry
+  workingDir: "[%WORKDIR%]"
+  timeoutSeconds: 14400
+  ttlSecondsAfterFinished: 300
+  env:
+    AGENT_BROWSER_SCREENSHOT_DIR: "[%RUN_DIR%]/.screenshots"
+    IS_SANDBOX: 1
+  steps:
+    - name: Run agent
+      uses: run-agent

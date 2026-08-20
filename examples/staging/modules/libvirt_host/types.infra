@@ -1,0 +1,20 @@
+import type { CommonConfig } from "../libvirt_vm/types.infra"
+
+export type VmConfig = object {
+  adoptExisting "adopt_existing"?: bool = false,
+  cpuMode "cpu_mode"?: string,
+  dataDiskSizeGib "data_disk_size_gib"?: number,
+  diskSizeGib "disk_size_gib"?: number = 10,
+  ipAddress "ip_address": string,
+  qemuGuestAgentEnabled "qemu_guest_agent_enabled"?: bool = false,
+  ramMb "ram_mb"?: number = 1024,
+  running?: bool = true,
+  serialConsoleEnabled "serial_console_enabled"?: bool = false,
+  vcpu?: number = 2,
+}
+
+export type HostCallConfig = object {
+  commonConfig "common_config": CommonConfig,
+  networkName "network_name": string,
+  vms: map<VmConfig>,
+}

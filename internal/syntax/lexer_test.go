@@ -46,3 +46,27 @@ func TestLexReportsUnterminatedComment(t *testing.T) {
 		t.Errorf("diagnostic = %q", diagnostics[0].Message)
 	}
 }
+
+func TestLexPhaseOneTokens(t *testing.T) {
+	t.Parallel()
+
+	tokens, diagnostics := Lex("phase.infra", "...value `module.old[\"x\"]` -> `module.new[\"x\"]` key => value")
+	if len(diagnostics) != 0 {
+		t.Fatalf("Lex() diagnostics = %v", diagnostics)
+	}
+	want := []TokenKind{
+		TokenEllipsis, TokenIdentifier, TokenRawAddress, TokenArrow,
+		TokenRawAddress, TokenIdentifier, TokenFatArrow, TokenIdentifier, TokenEOF,
+	}
+	if len(tokens) != len(want) {
+		t.Fatalf("Lex() tokens = %#v", tokens)
+	}
+	for index, kind := range want {
+		if tokens[index].Kind != kind {
+			t.Errorf("tokens[%d].Kind = %s, want %s", index, tokens[index].Kind, kind)
+		}
+	}
+	if tokens[2].Lexeme != `module.old["x"]` {
+		t.Errorf("raw address = %q", tokens[2].Lexeme)
+	}
+}

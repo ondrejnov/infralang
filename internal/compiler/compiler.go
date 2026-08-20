@@ -4,11 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
-	"regexp"
-	"sort"
 	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/ondrejnov/infralang/internal/syntax"
 )
@@ -23,23 +20,6 @@ const (
 	symbolData
 	symbolModule
 )
-
-type valueKind int
-
-const (
-	valueDynamic valueKind = iota
-	valueNull
-	valueString
-	valueNumber
-	valueBool
-	valueList
-	valueMap
-)
-
-type valueType struct {
-	kind    valueKind
-	element *valueType
-}
 
 type providerInfo struct {
 	name      string
@@ -57,6 +37,7 @@ type providerConfigInfo struct {
 type resourceInfo struct {
 	terraformType string
 	label         string
+	conditional   bool
 }
 
 type symbol struct {
@@ -66,6 +47,8 @@ type symbol struct {
 	providerConfig *providerConfigInfo
 	resource       *resourceInfo
 	moduleLabel    string
+	name           BindingName
+	moduleContract *ModuleInterface
 }
 
 type compiler struct {
@@ -86,6 +69,7 @@ type compiler struct {
 	dataSources       map[string]map[string]any
 	modules           map[string]any
 	outputBlocks      map[string]any
+	outputTypes       map[string]valueType
 	localDeclarations map[string]*syntax.LetDeclaration
 	localStates       map[string]int
 	inferLocals       bool
@@ -93,11 +77,31 @@ type compiler struct {
 	dataAddresses     map[string]syntax.Span
 	moduleAddresses   map[string]syntax.Span
 	movedBlocks       []any
-	scope             map[string]valueType
+	scope             *scopeFrame
+	typeCache         map[syntax.Expression]valueType
+	inputWires        map[string]*syntax.InputDeclaration
+	inputSources      map[string]*syntax.InputDeclaration
+	typeAliases       map[string]*typeAliasInfo
+	aliasStack        []string
+	aliasCycles       map[string]bool
+	options           CompileOptions
 }
 
 func Compile(file *syntax.File) ([]byte, []syntax.Diagnostic) {
-	c := &compiler{
+	return CompileWithOptions(file, CompileOptions{})
+}
+
+func CompileWithOptions(file *syntax.File, options CompileOptions) ([]byte, []syntax.Diagnostic) {
+	prepared, diagnostics := Prepare(file)
+	if len(diagnostics) != 0 {
+		return nil, diagnostics
+	}
+	c := newCompiler(prepared, options)
+	return c.run()
+}
+
+func newCompiler(file *syntax.File, options CompileOptions) *compiler {
+	return &compiler{
 		file:              file,
 		providers:         make(map[string]*providerInfo),
 		providerLocals:    make(map[string]*providerInfo),
@@ -114,27 +118,34 @@ func Compile(file *syntax.File) ([]byte, []syntax.Diagnostic) {
 		dataSources:       make(map[string]map[string]any),
 		modules:           make(map[string]any),
 		outputBlocks:      make(map[string]any),
+		outputTypes:       make(map[string]valueType),
 		localDeclarations: make(map[string]*syntax.LetDeclaration),
 		localStates:       make(map[string]int),
 		resourceAddresses: make(map[string]syntax.Span),
 		dataAddresses:     make(map[string]syntax.Span),
 		moduleAddresses:   make(map[string]syntax.Span),
-		scope:             make(map[string]valueType),
+		scope:             newScope(nil),
+		typeCache:         make(map[syntax.Expression]valueType),
+		inputWires:        make(map[string]*syntax.InputDeclaration),
+		inputSources:      make(map[string]*syntax.InputDeclaration),
+		typeAliases:       make(map[string]*typeAliasInfo),
+		aliasCycles:       make(map[string]bool),
+		options:           options,
 	}
+}
 
+func (c *compiler) run() ([]byte, []syntax.Diagnostic) {
 	c.collectDeclarations()
-	if len(c.diagnostics) == 0 {
-		c.compileDeclarations()
-	}
+	c.compileDeclarations()
 	if len(c.diagnostics) != 0 {
-		return nil, c.diagnostics
+		return nil, syntax.SortDiagnostics(c.diagnostics)
 	}
 	c.assembleRoot()
 
 	result, err := json.MarshalIndent(c.root, "", "  ")
 	if err != nil {
 		c.addDiagnostic(syntax.Span{}, fmt.Sprintf("failed to encode Terraform JSON: %v", err))
-		return nil, c.diagnostics
+		return nil, syntax.SortDiagnostics(c.diagnostics)
 	}
 	return append(result, '\n'), nil
 }
@@ -180,7 +191,44 @@ func (c *compiler) collectDeclarations() {
 			c.providers[value.Name] = info
 			c.providerLocals[localName] = info
 		case *syntax.InputDeclaration:
+			if previous, exists := c.inputSources[value.Name]; exists {
+				c.addDiagnostic(previous.GetSpan(), fmt.Sprintf("input source name %q conflicts with another input", value.Name))
+				c.addDiagnostic(value.GetSpan(), fmt.Sprintf("input source name %q conflicts with another input", value.Name))
+				continue
+			}
+			c.inputSources[value.Name] = value
+			wire := value.WireName
+			if wire == "" {
+				wire = value.Name
+			}
+			if previous, exists := c.inputWires[wire]; exists {
+				c.addDiagnostic(previous.GetSpan(), fmt.Sprintf("input wire name %q conflicts with another input", wire))
+				c.addDiagnostic(value.GetSpan(), fmt.Sprintf("input wire name %q conflicts with another input", wire))
+				continue
+			} else {
+				c.inputWires[wire] = value
+			}
 			c.collectSymbol(value.Name, symbolInput, value.GetSpan())
+			if input := c.symbols[value.Name]; input != nil && input.kind == symbolInput {
+				if value.ExplicitWire {
+					input.name = aliasedInputName(value.Name, wire)
+				} else {
+					input.name = legacyInputName(value.Name)
+				}
+			}
+		case *syntax.TypeAliasDeclaration:
+			if isBuiltinType(value.Name) {
+				c.addDiagnostic(value.GetSpan(), fmt.Sprintf("type alias %q cannot shadow a builtin type", value.Name))
+				continue
+			}
+			if previous, exists := c.typeAliases[value.Name]; exists {
+				c.addDiagnostic(previous.declaration.GetSpan(), fmt.Sprintf("type alias %q conflicts with another alias", value.Name))
+				c.addDiagnostic(value.GetSpan(), fmt.Sprintf("type alias %q conflicts with another alias", value.Name))
+				continue
+			}
+			c.typeAliases[value.Name] = &typeAliasInfo{declaration: value}
+		case *syntax.TypeImportDeclaration:
+			c.addDiagnostic(value.GetSpan(), "type imports require project compilation")
 		case *syntax.LetDeclaration:
 			c.collectSymbol(value.Name, symbolLocal, value.GetSpan())
 			if _, exists := c.symbols[value.Name]; exists {
@@ -220,13 +268,20 @@ func (c *compiler) collectSymbol(name string, kind symbolKind, span syntax.Span)
 		c.addDiagnostic(span, fmt.Sprintf("name %q is already declared", name))
 		return
 	}
-	c.symbols[name] = &symbol{kind: kind, span: span, valueType: valueType{kind: valueDynamic}}
+	c.symbols[name] = &symbol{kind: kind, span: span, valueType: valueType{kind: valueDynamic}, name: BindingName{Source: name, Wire: name}}
 }
 
 func (c *compiler) compileDeclarations() {
 	// Declarations are order-independent. Compile them in dependency phases so
 	// resource and module references already have stable Terraform addresses
 	// when locals and outputs are lowered.
+	for _, declaration := range c.file.Declarations {
+		if alias, ok := declaration.(*syntax.TypeAliasDeclaration); ok {
+			if info := c.typeAliases[alias.Name]; info != nil && info.declaration == alias {
+				c.compileAlias(alias.Name, alias.Type.GetSpan())
+			}
+		}
+	}
 	for _, declaration := range c.file.Declarations {
 		switch value := declaration.(type) {
 		case *syntax.TerraformDeclaration:
@@ -242,13 +297,7 @@ func (c *compiler) compileDeclarations() {
 			c.registerProviderConfig(value)
 		}
 	}
-	if len(c.diagnostics) != 0 {
-		return
-	}
 	c.registerAddresses()
-	if len(c.diagnostics) != 0 {
-		return
-	}
 	c.inferLocals = true
 	for _, declaration := range c.file.Declarations {
 		if value, ok := declaration.(*syntax.LetDeclaration); ok {
@@ -261,6 +310,7 @@ func (c *compiler) compileDeclarations() {
 			c.compileProviderConfig(value)
 		}
 	}
+	c.checkComponentChecks()
 	for _, declaration := range c.file.Declarations {
 		switch value := declaration.(type) {
 		case *syntax.ResourceDeclaration:
@@ -278,25 +328,33 @@ func (c *compiler) compileDeclarations() {
 	}
 	for _, declaration := range c.file.Declarations {
 		if value, ok := declaration.(*syntax.MovedDeclaration); ok {
-			c.movedBlocks = append(c.movedBlocks, map[string]any{"from": value.From, "to": value.To})
+			if len(value.Items) == 0 {
+				c.movedBlocks = append(c.movedBlocks, map[string]any{"from": value.From, "to": value.To})
+				continue
+			}
+			for _, item := range value.Items {
+				c.movedBlocks = append(c.movedBlocks, map[string]any{"from": item.From.Raw, "to": item.To.Raw})
+			}
 		}
 	}
 }
 
 func (c *compiler) compileTerraform(declaration *syntax.TerraformDeclaration) {
-	for _, field := range declaration.Config.Fields {
-		switch field.Name {
+	config := c.encodeBlockBody(declaration.Config)
+	for key, encoded := range config {
+		switch key {
 		case "requiredVersion", "required_version":
-			value, ok := literalString(field.Value)
-			if !ok {
-				c.addDiagnostic(field.GetSpan(), "terraform requiredVersion must be a literal string")
+			value, ok := encoded.(string)
+			if !ok || strings.HasPrefix(value, "${") {
+				c.addDiagnostic(declaration.Config.GetSpan(), "terraform requiredVersion must be a literal string")
 				continue
 			}
 			c.terraformConfig["required_version"] = value
 		default:
-			c.addDiagnostic(field.GetSpan(), fmt.Sprintf("unsupported terraform setting %q", field.Name))
+			c.addDiagnostic(declaration.Config.GetSpan(), fmt.Sprintf("unsupported terraform setting %q", key))
 		}
 	}
+	c.checkExpression(declaration.Config)
 }
 
 func (c *compiler) compileProvider(declaration *syntax.ProviderDeclaration) {
@@ -313,54 +371,140 @@ func (c *compiler) compileProvider(declaration *syntax.ProviderDeclaration) {
 
 func (c *compiler) compileInput(declaration *syntax.InputDeclaration) {
 	typeInfo := c.compileType(declaration.Type)
-	c.symbols[declaration.Name].valueType = typeInfo
-	block := map[string]any{"type": terraformTypeConstraint(declaration.Type)}
+	symbol := c.symbols[declaration.Name]
+	if symbol == nil || symbol.kind != symbolInput {
+		return
+	}
+	symbol.valueType = typeInfo
+	block := map[string]any{"type": c.terraformTypeConstraint(declaration.Type)}
 	if declaration.Default != nil {
 		actual := c.checkExpression(declaration.Default)
-		if !c.inputDefaultAssignable(typeInfo, declaration.Default) || !isAssignable(typeInfo, actual) {
-			c.addDiagnostic(declaration.Default.GetSpan(), fmt.Sprintf("default for %q has incompatible type", declaration.Name))
-		}
+		c.checkAssignment(typeInfo, actual, declaration.Default.GetSpan(), "default for "+strconv.Quote(declaration.Name))
 		if !isConstant(declaration.Default) {
 			c.addDiagnostic(declaration.Default.GetSpan(), "input default must be a constant expression")
 		} else {
-			block["default"] = c.encodeExpression(declaration.Default, false)
+			block["default"] = c.encodeValueWithDefaults(declaration.Default, typeInfo)
 		}
 	} else if declaration.Type != nil && declaration.Type.Name == "optional" {
 		block["default"] = nil
 	}
 	if declaration.Metadata != nil {
-		for _, field := range declaration.Metadata.Fields {
-			key := toSnakeCase(field.Name)
-			switch key {
-			case "description", "sensitive", "nullable":
-				block[key] = c.encodeExpression(field.Value, false)
-				c.checkExpression(field.Value)
-			case "validations":
-				array, ok := field.Value.(*syntax.ArrayExpression)
-				if !ok {
-					c.addDiagnostic(field.GetSpan(), "input validations must be an array")
-					continue
-				}
-				validations := make([]any, 0, len(array.Items))
-				for _, item := range array.Items {
-					object, ok := item.(*syntax.ObjectExpression)
-					if !ok {
-						c.addDiagnostic(item.GetSpan(), "each input validation must be an object")
-						continue
-					}
-					validations = append(validations, c.encodeObject(object, true))
-					c.checkExpression(object)
-				}
-				block["validation"] = validations
-			default:
-				c.addDiagnostic(field.GetSpan(), fmt.Sprintf("unsupported input metadata %q", field.Name))
+		items := declaration.MetadataItems
+		if len(items) == 0 {
+			items = make([]syntax.InputMetadataItem, 0, len(declaration.Metadata.Fields))
+			for _, field := range declaration.Metadata.Fields {
+				items = append(items, field)
 			}
 		}
+		items = c.expandInputMetadataItems(items)
+		var validations []any
+		for _, item := range items {
+			switch value := item.(type) {
+			case syntax.ValidationClause:
+				conditionType := c.checkExpression(value.Condition)
+				if !isBoolOrDynamic(conditionType) {
+					c.addDiagnostic(value.Condition.GetSpan(), "input validation condition expects a bool")
+				}
+				validations = append(validations, map[string]any{
+					"condition":     c.encodeValue(value.Condition),
+					"error_message": value.Message,
+				})
+			case syntax.ObjectField:
+				field := value
+				if field.Condition != nil {
+					conditionType := c.checkExpression(field.Condition)
+					if !isBoolOrDynamic(conditionType) {
+						c.addDiagnostic(field.Condition.GetSpan(), "conditional object field expects a bool condition")
+						continue
+					}
+					condition, constant := literalBool(field.Condition)
+					if !constant {
+						c.addDiagnostic(field.Condition.GetSpan(), "Terraform metadata fields must be statically known")
+						continue
+					}
+					if !condition {
+						continue
+					}
+				}
+				key := field.WireName
+				if key == "" {
+					key = syntax.SourceNameToWire(field.Name)
+				}
+				switch key {
+				case "description", "sensitive", "nullable":
+					block[key] = c.encodeValue(field.Value)
+					fieldType := c.checkExpression(field.Value)
+					if key == "sensitive" {
+						if literal, ok := field.Value.(*syntax.LiteralExpression); ok {
+							if sensitive, ok := literal.Value.(bool); ok && sensitive {
+								typeInfo.sensitive = true
+								symbol.valueType.sensitive = true
+							}
+						}
+						if !isBoolOrDynamic(fieldType) {
+							c.addDiagnostic(field.Value.GetSpan(), "input sensitive metadata expects a bool")
+						}
+					}
+				case "validations":
+					array, ok := field.Value.(*syntax.ArrayExpression)
+					if !ok {
+						c.addDiagnostic(field.GetSpan(), "input validations must be an array")
+						continue
+					}
+					for _, item := range array.Items {
+						object, ok := item.(*syntax.ObjectExpression)
+						if !ok {
+							c.addDiagnostic(item.GetSpan(), "each input validation must be an object")
+							continue
+						}
+						validations = append(validations, c.encodeBlockBody(object))
+						c.checkExpression(object)
+					}
+				default:
+					c.addDiagnostic(field.GetSpan(), fmt.Sprintf("unsupported input metadata %q", field.Name))
+				}
+			}
+		}
+		if len(validations) > 0 {
+			block["validation"] = validations
+		}
 	}
-	c.variables[declaration.Name] = block
+	c.variables[symbol.name.Wire] = block
+}
+
+func (c *compiler) expandInputMetadataItems(items []syntax.InputMetadataItem) []syntax.InputMetadataItem {
+	var result []syntax.InputMetadataItem
+	for _, item := range items {
+		spread, ok := item.(syntax.ObjectSpread)
+		if !ok {
+			result = append(result, item)
+			continue
+		}
+		object, ok := spread.Value.(*syntax.ObjectExpression)
+		if !ok {
+			c.checkExpression(spread.Value)
+			c.addDiagnostic(spread.GetSpan(), "Terraform metadata spread must have a statically known object shape")
+			continue
+		}
+		var expanded []syntax.InputMetadataItem
+		for _, objectItem := range objectItems(object) {
+			switch value := objectItem.(type) {
+			case syntax.ObjectField:
+				expanded = append(expanded, value)
+			case syntax.ObjectSpread:
+				expanded = append(expanded, value)
+			}
+		}
+		result = append(result, c.expandInputMetadataItems(expanded)...)
+	}
+	return result
 }
 
 func (c *compiler) compileLocal(declaration *syntax.LetDeclaration) {
+	localSymbol := c.symbols[declaration.Name]
+	if localSymbol == nil || localSymbol.kind != symbolLocal {
+		return
+	}
 	switch c.localStates[declaration.Name] {
 	case 1:
 		c.addDiagnostic(declaration.GetSpan(), fmt.Sprintf("local %q is part of a dependency cycle", declaration.Name))
@@ -370,8 +514,8 @@ func (c *compiler) compileLocal(declaration *syntax.LetDeclaration) {
 	}
 	c.localStates[declaration.Name] = 1
 	valueType := c.checkExpression(declaration.Value)
-	c.symbols[declaration.Name].valueType = valueType
-	c.locals[declaration.Name] = c.encodeExpression(declaration.Value, false)
+	localSymbol.valueType = valueType
+	c.locals[declaration.Name] = c.encodeValue(declaration.Value)
 	c.localStates[declaration.Name] = 2
 }
 
@@ -407,18 +551,26 @@ func (c *compiler) registerProviderConfig(declaration *syntax.ConfigureDeclarati
 		return
 	}
 	c.providerAliases[provider.localName][alias] = declaration.GetSpan()
-	c.symbols[declaration.Name].providerConfig = &providerConfigInfo{provider: provider, alias: alias}
+	providerSymbol := c.symbols[declaration.Name]
+	if providerSymbol == nil || providerSymbol.kind != symbolProviderConfig {
+		return
+	}
+	providerSymbol.providerConfig = &providerConfigInfo{provider: provider, alias: alias}
 }
 
 func (c *compiler) compileProviderConfig(declaration *syntax.ConfigureDeclaration) {
-	providerConfig := c.symbols[declaration.Name].providerConfig
+	providerSymbol := c.symbols[declaration.Name]
+	if providerSymbol == nil || providerSymbol.kind != symbolProviderConfig {
+		return
+	}
+	providerConfig := providerSymbol.providerConfig
 	if providerConfig == nil {
 		return
 	}
 	if declaration.Inherited {
 		return
 	}
-	config := c.encodeObject(declaration.Config, true)
+	config := c.encodeBlockBody(declaration.Config)
 	if providerConfig.alias != "" {
 		config["alias"] = providerConfig.alias
 	}
@@ -443,7 +595,9 @@ func (c *compiler) registerAddresses() {
 				continue
 			}
 			c.resourceAddresses[address] = value.GetSpan()
-			c.symbols[value.Name].resource = &resourceInfo{terraformType: terraformType, label: value.Label}
+			if symbol := c.symbols[value.Name]; symbol != nil && symbol.kind == symbolResource {
+				symbol.resource = &resourceInfo{terraformType: terraformType, label: value.Label, conditional: value.Condition != nil}
+			}
 		case *syntax.DataDeclaration:
 			terraformType, ok := c.managedType(value.ProviderConfigName, value.Kind, value.GetSpan())
 			if !ok {
@@ -455,14 +609,28 @@ func (c *compiler) registerAddresses() {
 				continue
 			}
 			c.dataAddresses[address] = value.GetSpan()
-			c.symbols[value.Name].resource = &resourceInfo{terraformType: terraformType, label: value.Label}
+			if symbol := c.symbols[value.Name]; symbol != nil && symbol.kind == symbolData {
+				symbol.resource = &resourceInfo{terraformType: terraformType, label: value.Label}
+			}
 		case *syntax.ModuleDeclaration:
 			if _, exists := c.moduleAddresses[value.Label]; exists {
 				c.addDiagnostic(value.GetSpan(), fmt.Sprintf("Terraform module %q is already declared", value.Label))
 				continue
 			}
 			c.moduleAddresses[value.Label] = value.GetSpan()
-			c.symbols[value.Name].moduleLabel = value.Label
+			if symbol := c.symbols[value.Name]; symbol != nil && symbol.kind == symbolModule {
+				symbol.moduleLabel = value.Label
+				if contract, exists := c.options.LocalModules[value.Source]; exists {
+					contract := contract
+					symbol.moduleContract = &contract
+					outputType := contract.outputObjectType()
+					if _, iterated := objectField(value.MetaArguments, "forEach", "for_each"); iterated {
+						symbol.valueType = valueType{kind: valueMap, element: &outputType, sensitive: outputType.sensitive}
+					} else {
+						symbol.valueType = outputType
+					}
+				}
+			}
 		}
 	}
 }
@@ -501,24 +669,48 @@ func (c *compiler) compileResource(declaration *syntax.ResourceDeclaration) {
 		c.resources[terraformType] = make(map[string]any)
 	}
 
-	body := c.encodeObject(declaration.Arguments, true)
+	previousScope := c.scope
+	if field, ok := objectField(declaration.MetaArguments, "forEach", "for_each"); ok {
+		collectionType := c.checkExpression(field.Value)
+		keyType, itemType, valid := eachTypes(collectionType)
+		if !valid && collectionType.kind != valueDynamic {
+			c.addDiagnostic(field.Value.GetSpan(), fmt.Sprintf("invalid forEach type %s; expected map<T>, object, or set<string>", valueTypeDescription(collectionType)))
+		}
+		c.scope = newScope(previousScope)
+		c.scope.bindings["each"] = eachObjectType(keyType, itemType)
+		defer func() { c.scope = previousScope }()
+	}
+	body := c.encodeBlockBody(declaration.Arguments)
+	if declaration.Condition != nil {
+		conditionType := c.checkExpression(declaration.Condition)
+		if !isBoolOrDynamic(conditionType) {
+			c.addDiagnostic(declaration.Condition.GetSpan(), "resource when condition expects a bool")
+		}
+		body["count"] = "${" + c.renderExpression(declaration.Condition) + " ? 1 : 0}"
+	}
 	if declaration.MetaArguments != nil {
+		metadata := c.encodeBlockBody(declaration.MetaArguments)
 		for _, field := range declaration.MetaArguments.Fields {
-			key := field.Name
-			if !field.Quoted {
-				key = toSnakeCase(key)
-			}
-			if _, exists := body[key]; exists {
-				c.addDiagnostic(field.GetSpan(), fmt.Sprintf("resource argument %q is defined more than once", key))
+			key := objectFieldName(field).Wire
+			if !includedObjectField(field) {
 				continue
 			}
 			if key == "depends_on" {
-				body[key] = c.encodeStaticTraversals(field.Value)
+				metadata[key] = c.encodeStaticTraversals(field.Value)
 			} else if key == "lifecycle" {
-				body[key] = c.encodeLifecycle(field.Value)
-			} else {
-				body[key] = c.encodeExpression(field.Value, true)
+				metadata[key] = c.encodeLifecycle(field.Value)
 			}
+		}
+		for key, value := range metadata {
+			if declaration.Condition != nil && (key == "count" || key == "for_each") {
+				c.addDiagnostic(declaration.MetaArguments.GetSpan(), "resource when conflicts with explicit cardinality metadata")
+				continue
+			}
+			if _, exists := body[key]; exists {
+				c.addDiagnostic(declaration.MetaArguments.GetSpan(), fmt.Sprintf("resource argument %q is defined more than once", key))
+				continue
+			}
+			body[key] = value
 		}
 	}
 	if !providerConfig.provider.builtin && providerConfig.alias != "" {
@@ -547,7 +739,7 @@ func (c *compiler) compileData(declaration *syntax.DataDeclaration) {
 		c.dataSources[terraformType] = make(map[string]any)
 	}
 
-	body := c.encodeObject(declaration.Arguments, true)
+	body := c.encodeBlockBody(declaration.Arguments)
 	if !providerConfig.provider.builtin && providerConfig.alias != "" {
 		body["provider"] = providerConfig.provider.localName + "." + providerConfig.alias
 	}
@@ -556,57 +748,103 @@ func (c *compiler) compileData(declaration *syntax.DataDeclaration) {
 }
 
 func (c *compiler) compileModule(declaration *syntax.ModuleDeclaration) {
-	withEach := declaration.MetaArguments != nil && hasObjectField(declaration.MetaArguments, "forEach", "for_each")
-	if withEach {
-		c.scope["each"] = valueType{kind: valueDynamic}
-		defer delete(c.scope, "each")
+	previousScope := c.scope
+	if field, ok := objectField(declaration.MetaArguments, "forEach", "for_each"); ok {
+		collectionType := c.checkExpression(field.Value)
+		keyType, itemType, valid := eachTypes(collectionType)
+		if !valid && collectionType.kind != valueDynamic {
+			c.addDiagnostic(field.Value.GetSpan(), fmt.Sprintf("invalid forEach type %s; expected map<T>, object, or set<string>", valueTypeDescription(collectionType)))
+		}
+		c.scope = newScope(previousScope)
+		c.scope.bindings["each"] = eachObjectType(keyType, itemType)
+		defer func() { c.scope = previousScope }()
 	}
-	body := c.encodeObject(declaration.Arguments, true)
+	body := c.compileModuleArguments(declaration)
 	body["source"] = declaration.Source
+	suppliedProviders := make(map[string]*providerInfo)
 	if declaration.Providers != nil {
 		providers := make(map[string]any)
-		for _, field := range declaration.Providers.Fields {
-			identifier, ok := field.Value.(*syntax.IdentifierExpression)
-			if !ok {
-				c.addDiagnostic(field.GetSpan(), "module provider mapping must reference a provider configuration")
-				continue
+		if declaration.Providers.Explicit != nil {
+			for _, field := range declaration.Providers.Explicit.Fields {
+				identifier, ok := field.Value.(*syntax.IdentifierExpression)
+				if !ok {
+					c.addDiagnostic(field.GetSpan(), "module provider mapping must reference a provider configuration")
+					continue
+				}
+				providerSymbol := c.symbols[identifier.Name]
+				if providerSymbol == nil || providerSymbol.kind != symbolProviderConfig || providerSymbol.providerConfig == nil {
+					c.addDiagnostic(field.GetSpan(), fmt.Sprintf("unknown provider configuration %q", identifier.Name))
+					continue
+				}
+				key := objectFieldName(field).Wire
+				config := providerSymbol.providerConfig
+				reference := config.provider.localName
+				if config.alias != "" {
+					reference += "." + config.alias
+				}
+				providers[key] = reference
+				suppliedProviders[key] = config.provider
 			}
-			providerSymbol := c.symbols[identifier.Name]
-			if providerSymbol == nil || providerSymbol.kind != symbolProviderConfig || providerSymbol.providerConfig == nil {
-				c.addDiagnostic(field.GetSpan(), fmt.Sprintf("unknown provider configuration %q", identifier.Name))
-				continue
+		} else {
+			seenHandles := make(map[string]struct{})
+			seenProviders := make(map[*providerInfo]struct{})
+			for _, expression := range declaration.Providers.Inferred {
+				identifier, ok := expression.(*syntax.IdentifierExpression)
+				if !ok {
+					c.addDiagnostic(expression.GetSpan(), "module provider shorthand must reference a provider configuration")
+					continue
+				}
+				providerSymbol := c.symbols[identifier.Name]
+				if providerSymbol == nil || providerSymbol.kind != symbolProviderConfig || providerSymbol.providerConfig == nil {
+					c.addDiagnostic(expression.GetSpan(), fmt.Sprintf("unknown provider configuration %q", identifier.Name))
+					continue
+				}
+				if _, exists := seenHandles[identifier.Name]; exists {
+					c.addDiagnostic(expression.GetSpan(), fmt.Sprintf("provider configuration %q is repeated in shorthand", identifier.Name))
+					continue
+				}
+				config := providerSymbol.providerConfig
+				if _, exists := seenProviders[config.provider]; exists {
+					c.addDiagnostic(expression.GetSpan(), fmt.Sprintf("provider %q is repeated through multiple configurations", config.provider.localName))
+					continue
+				}
+				key := config.provider.localName
+				if _, exists := providers[key]; exists {
+					c.addDiagnostic(expression.GetSpan(), fmt.Sprintf("module provider key %q is inferred more than once", key))
+					continue
+				}
+				reference := config.provider.localName
+				if config.alias != "" {
+					reference += "." + config.alias
+				}
+				providers[key] = reference
+				suppliedProviders[key] = config.provider
+				seenHandles[identifier.Name] = struct{}{}
+				seenProviders[config.provider] = struct{}{}
 			}
-			key := field.Name
-			if !field.Quoted {
-				key = toSnakeCase(key)
-			}
-			config := providerSymbol.providerConfig
-			reference := config.provider.localName
-			if config.alias != "" {
-				reference += "." + config.alias
-			}
-			providers[key] = reference
 		}
 		body["providers"] = providers
 	}
+	c.checkModuleProviders(declaration, suppliedProviders)
 	if declaration.MetaArguments != nil {
+		metadata := c.encodeBlockBody(declaration.MetaArguments)
 		for _, field := range declaration.MetaArguments.Fields {
-			key := field.Name
-			if !field.Quoted {
-				key = toSnakeCase(key)
-			}
-			if _, exists := body[key]; exists {
-				c.addDiagnostic(field.GetSpan(), fmt.Sprintf("module argument %q is defined more than once", key))
+			key := objectFieldName(field).Wire
+			if !includedObjectField(field) {
 				continue
 			}
 			if key == "depends_on" {
-				body[key] = c.encodeStaticTraversals(field.Value)
-			} else {
-				body[key] = c.encodeExpression(field.Value, true)
+				metadata[key] = c.encodeStaticTraversals(field.Value)
 			}
 		}
+		for key, value := range metadata {
+			if _, exists := body[key]; exists {
+				c.addDiagnostic(declaration.MetaArguments.GetSpan(), fmt.Sprintf("module argument %q is defined more than once", key))
+				continue
+			}
+			body[key] = value
+		}
 	}
-	c.checkExpression(declaration.Arguments)
 	if declaration.MetaArguments != nil {
 		c.checkExpression(declaration.MetaArguments)
 	}
@@ -614,21 +852,21 @@ func (c *compiler) compileModule(declaration *syntax.ModuleDeclaration) {
 }
 
 func (c *compiler) compileOutput(declaration *syntax.OutputDeclaration) {
-	c.checkExpression(declaration.Value)
+	outputType := c.checkExpression(declaration.Value)
+	c.outputTypes[declaration.Name] = outputType
 	block := map[string]any{
-		"value": c.encodeExpression(declaration.Value, false),
+		"value": c.encodeValue(declaration.Value),
 	}
 	if declaration.Metadata != nil {
-		for _, field := range declaration.Metadata.Fields {
-			key := toSnakeCase(field.Name)
+		for key, value := range c.encodeBlockBody(declaration.Metadata) {
 			switch key {
 			case "description", "sensitive":
-				block[key] = c.encodeExpression(field.Value, false)
-				c.checkExpression(field.Value)
+				block[key] = value
 			default:
-				c.addDiagnostic(field.GetSpan(), fmt.Sprintf("unsupported output metadata %q", field.Name))
+				c.addDiagnostic(declaration.Metadata.GetSpan(), fmt.Sprintf("unsupported output metadata %q", key))
 			}
 		}
+		c.checkExpression(declaration.Metadata)
 	}
 	c.outputBlocks[declaration.Name] = block
 }
@@ -697,12 +935,32 @@ func (c *compiler) compileType(expression *syntax.TypeExpression) valueType {
 		return valueType{kind: valueDynamic}
 	case "object":
 		c.expectTypeArgumentCount(expression, 0)
-		fields := make(map[string]struct{}, len(expression.Fields))
+		fields := make(map[string]syntax.TypeField, len(expression.Fields))
+		wireFields := make(map[string]syntax.TypeField, len(expression.Fields))
+		result := valueType{kind: valueObject}
 		for _, field := range expression.Fields {
-			if _, exists := fields[field.Name]; exists {
-				c.addDiagnostic(field.GetSpan(), fmt.Sprintf("object type field %q is defined more than once", field.Name))
+			sourceConflict := false
+			if !field.Quoted {
+				if previous, exists := fields[field.Name]; exists {
+					c.addDiagnostic(previous.GetSpan(), fmt.Sprintf("object type source field %q conflicts with another field", field.Name))
+					c.addDiagnostic(field.GetSpan(), fmt.Sprintf("object type source field %q conflicts with another field", field.Name))
+					sourceConflict = true
+				}
+				fields[field.Name] = field
 			}
-			fields[field.Name] = struct{}{}
+			wire := field.WireName
+			if wire == "" {
+				if field.Quoted {
+					wire = field.Name
+				} else {
+					wire = syntax.SourceNameToWire(field.Name)
+				}
+			}
+			if previous, exists := wireFields[wire]; exists && !sourceConflict {
+				c.addDiagnostic(previous.GetSpan(), fmt.Sprintf("object type wire field %q conflicts with another field", wire))
+				c.addDiagnostic(field.GetSpan(), fmt.Sprintf("object type wire field %q conflicts with another field", wire))
+			}
+			wireFields[wire] = field
 			fieldType := c.compileType(field.Type)
 			if field.Default != nil {
 				if !field.Optional {
@@ -714,15 +972,27 @@ func (c *compiler) compileType(expression *syntax.TypeExpression) valueType {
 					c.addDiagnostic(field.Default.GetSpan(), fmt.Sprintf("default for object field %q has incompatible type", field.Name))
 				}
 			}
+			name := BindingName{Source: field.Name, Wire: wire, ExplicitWire: field.ExplicitWire, Quoted: field.Quoted}
+			if field.Quoted {
+				name.Source = ""
+			}
+			result.fields = append(result.fields, valueField{
+				name: name, typeInfo: fieldType, optional: field.Optional,
+				defaulted: field.Default != nil, defaultValue: field.Default, span: field.GetSpan(),
+			})
 		}
-		return valueType{kind: valueDynamic}
+		return result
 	case "list", "set":
 		c.expectTypeArgumentCount(expression, 1)
 		element := valueType{kind: valueDynamic}
 		if len(expression.Arguments) > 0 {
 			element = c.compileType(expression.Arguments[0])
 		}
-		return valueType{kind: valueList, element: &element}
+		kind := valueList
+		if expression.Name == "set" {
+			kind = valueSet
+		}
+		return valueType{kind: kind, element: &element}
 	case "map":
 		c.expectTypeArgumentCount(expression, 1)
 		element := valueType{kind: valueDynamic}
@@ -737,8 +1007,51 @@ func (c *compiler) compileType(expression *syntax.TypeExpression) valueType {
 		}
 		return valueType{kind: valueDynamic}
 	default:
-		c.addDiagnostic(expression.GetSpan(), fmt.Sprintf("unknown type %q", expression.Name))
+		return c.compileAlias(expression.Name, expression.GetSpan())
+	}
+}
+
+func (c *compiler) compileAlias(name string, reference syntax.Span) valueType {
+	alias := c.typeAliases[name]
+	if alias == nil {
+		c.addDiagnostic(reference, fmt.Sprintf("unknown type %q", name))
 		return valueType{kind: valueDynamic}
+	}
+	switch alias.state {
+	case 1:
+		start := 0
+		for index, item := range c.aliasStack {
+			if item == name {
+				start = index
+				break
+			}
+		}
+		for _, item := range c.aliasStack[start:] {
+			if c.aliasCycles[item] {
+				continue
+			}
+			c.aliasCycles[item] = true
+			declaration := c.typeAliases[item].declaration
+			c.addDiagnostic(declaration.GetSpan(), fmt.Sprintf("type alias %q is part of a dependency cycle", item))
+		}
+		return valueType{kind: valueDynamic}
+	case 2:
+		return alias.typeInfo
+	}
+	alias.state = 1
+	c.aliasStack = append(c.aliasStack, name)
+	alias.typeInfo = c.compileType(alias.declaration.Type)
+	c.aliasStack = c.aliasStack[:len(c.aliasStack)-1]
+	alias.state = 2
+	return alias.typeInfo
+}
+
+func isBuiltinType(name string) bool {
+	switch name {
+	case "string", "number", "bool", "dynamic", "any", "object", "list", "set", "map", "optional":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -748,12 +1061,15 @@ func (c *compiler) expectTypeArgumentCount(expression *syntax.TypeExpression, ex
 	}
 }
 
-func terraformTypeConstraint(expression *syntax.TypeExpression) any {
+func (c *compiler) terraformTypeConstraint(expression *syntax.TypeExpression) any {
 	if expression == nil {
 		return "any"
 	}
+	if alias := c.typeAliases[expression.Name]; alias != nil {
+		return c.terraformTypeConstraintString(alias.declaration.Type, map[string]bool{expression.Name: true})
+	}
 	if expression.Name == "object" && len(expression.Fields) > 0 {
-		return terraformTypeConstraintString(expression)
+		return c.terraformTypeConstraintString(expression, make(map[string]bool))
 	}
 	if len(expression.Arguments) == 0 && len(expression.Fields) == 0 {
 		if expression.Name == "dynamic" || expression.Name == "object" {
@@ -762,20 +1078,31 @@ func terraformTypeConstraint(expression *syntax.TypeExpression) any {
 		return expression.Name
 	}
 	if expression.Name == "optional" && len(expression.Arguments) == 1 {
-		return terraformTypeConstraint(expression.Arguments[0])
+		return c.terraformTypeConstraint(expression.Arguments[0])
 	}
 	arguments := make([]string, 0, len(expression.Arguments))
 	for _, argument := range expression.Arguments {
-		arguments = append(arguments, terraformTypeConstraintString(argument))
+		arguments = append(arguments, c.terraformTypeConstraintString(argument, make(map[string]bool)))
 	}
 	return expression.Name + "(" + strings.Join(arguments, ", ") + ")"
 }
 
-func terraformTypeConstraintString(expression *syntax.TypeExpression) string {
+func (c *compiler) terraformTypeConstraintString(expression *syntax.TypeExpression, visiting map[string]bool) string {
+	if alias := c.typeAliases[expression.Name]; alias != nil {
+		if visiting[expression.Name] {
+			return "any"
+		}
+		next := make(map[string]bool, len(visiting)+1)
+		for name, value := range visiting {
+			next[name] = value
+		}
+		next[expression.Name] = true
+		return c.terraformTypeConstraintString(alias.declaration.Type, next)
+	}
 	if expression.Name == "object" && len(expression.Fields) > 0 {
 		fields := make([]string, 0, len(expression.Fields))
 		for _, field := range expression.Fields {
-			constraint := terraformTypeConstraintString(field.Type)
+			constraint := c.terraformTypeConstraintString(field.Type, visiting)
 			if field.Optional {
 				if field.Default != nil {
 					constraint = "optional(" + constraint + ", " + renderConstant(field.Default) + ")"
@@ -783,7 +1110,18 @@ func terraformTypeConstraintString(expression *syntax.TypeExpression) string {
 					constraint = "optional(" + constraint + ")"
 				}
 			}
-			fields = append(fields, field.Name+" = "+constraint)
+			wire := field.WireName
+			if wire == "" {
+				if field.Quoted {
+					wire = field.Name
+				} else {
+					wire = syntax.SourceNameToWire(field.Name)
+				}
+			}
+			if !syntax.IsTerraformIdentifier(wire) {
+				wire = quoteHCLString(wire)
+			}
+			fields = append(fields, wire+" = "+constraint)
 		}
 		return "object({" + strings.Join(fields, ", ") + "})"
 	}
@@ -794,11 +1132,11 @@ func terraformTypeConstraintString(expression *syntax.TypeExpression) string {
 		return expression.Name
 	}
 	if expression.Name == "optional" && len(expression.Arguments) == 1 {
-		return terraformTypeConstraintString(expression.Arguments[0])
+		return c.terraformTypeConstraintString(expression.Arguments[0], visiting)
 	}
 	arguments := make([]string, 0, len(expression.Arguments))
 	for _, argument := range expression.Arguments {
-		arguments = append(arguments, terraformTypeConstraintString(argument))
+		arguments = append(arguments, c.terraformTypeConstraintString(argument, visiting))
 	}
 	return expression.Name + "(" + strings.Join(arguments, ", ") + ")"
 }
@@ -807,6 +1145,15 @@ func (c *compiler) checkExpression(expression syntax.Expression) valueType {
 	if expression == nil {
 		return valueType{kind: valueDynamic}
 	}
+	if cached, ok := c.typeCache[expression]; ok {
+		return cached
+	}
+	result := c.checkExpressionUncached(expression)
+	c.typeCache[expression] = result
+	return result
+}
+
+func (c *compiler) checkExpressionUncached(expression syntax.Expression) valueType {
 	switch value := expression.(type) {
 	case *syntax.LiteralExpression:
 		switch value.Value.(type) {
@@ -822,7 +1169,7 @@ func (c *compiler) checkExpression(expression syntax.Expression) valueType {
 			return valueType{kind: valueDynamic}
 		}
 	case *syntax.IdentifierExpression:
-		if scoped, ok := c.scope[value.Name]; ok {
+		if scoped, ok := c.scope.lookup(value.Name); ok {
 			return scoped
 		}
 		symbol := c.symbols[value.Name]
@@ -843,22 +1190,24 @@ func (c *compiler) checkExpression(expression syntax.Expression) valueType {
 		}
 		return symbol.valueType
 	case *syntax.ArrayExpression:
-		element := valueType{kind: valueDynamic}
-		for index, item := range value.Items {
+		tuple := make([]valueType, 0, len(value.Items))
+		sensitive := false
+		for _, item := range value.Items {
 			itemType := c.checkExpression(item)
-			if index == 0 {
-				element = itemType
-			} else if !isAssignable(element, itemType) || !isAssignable(itemType, element) {
-				element = valueType{kind: valueDynamic}
-			}
+			tuple = append(tuple, itemType)
+			sensitive = sensitive || itemType.sensitive
 		}
-		return valueType{kind: valueList, element: &element}
+		return valueType{kind: valueTuple, tuple: tuple, sensitive: sensitive}
 	case *syntax.ForExpression:
-		c.checkExpression(value.Collection)
+		collectionType := c.checkExpression(value.Collection)
+		keyType, itemType := iteratorTypes(collectionType)
+		previousScope := c.scope
+		c.scope = newScope(previousScope)
+		defer func() { c.scope = previousScope }()
 		if value.KeyVariable != "" {
-			c.scope[value.KeyVariable] = valueType{kind: valueDynamic}
+			c.scope.bindings[value.KeyVariable] = keyType
 		}
-		c.scope[value.ValueVariable] = valueType{kind: valueDynamic}
+		c.scope.bindings[value.ValueVariable] = itemType
 		if value.Key != nil {
 			c.checkExpression(value.Key)
 		}
@@ -869,38 +1218,89 @@ func (c *compiler) checkExpression(expression syntax.Expression) valueType {
 				c.addDiagnostic(value.Condition.GetSpan(), "comprehension filter expects a bool")
 			}
 		}
-		delete(c.scope, value.ValueVariable)
-		if value.KeyVariable != "" {
-			delete(c.scope, value.KeyVariable)
-		}
 		if value.Object {
-			return valueType{kind: valueMap, element: &result}
+			return valueType{kind: valueMap, element: &result, sensitive: result.sensitive || collectionType.sensitive}
 		}
-		return valueType{kind: valueList, element: &result}
+		return valueType{kind: valueList, element: &result, sensitive: result.sensitive || collectionType.sensitive}
 	case *syntax.ObjectExpression:
-		for _, field := range value.Fields {
-			c.checkExpression(field.Value)
-		}
-		return valueType{kind: valueMap, element: &valueType{kind: valueDynamic}}
-	case *syntax.TemplateExpression:
-		for _, part := range value.Parts {
-			if part.Expression != nil {
-				c.checkExpression(part.Expression)
+		result := valueType{kind: valueObject}
+		sourceNames := make(map[string]syntax.ObjectField)
+		wireNames := make(map[string]syntax.ObjectField)
+		for _, item := range objectItems(value) {
+			switch item := item.(type) {
+			case syntax.ObjectField:
+				name := objectFieldName(item)
+				sourceConflict := false
+				if name.Source != "" {
+					if previous, exists := sourceNames[name.Source]; exists {
+						c.addDiagnostic(previous.GetSpan(), fmt.Sprintf("object source field %q conflicts with another field", name.Source))
+						c.addDiagnostic(item.GetSpan(), fmt.Sprintf("object source field %q conflicts with another field", name.Source))
+						sourceConflict = true
+					}
+					sourceNames[name.Source] = item
+				}
+				if previous, exists := wireNames[name.Wire]; exists && !sourceConflict {
+					c.addDiagnostic(previous.GetSpan(), fmt.Sprintf("object field %q is defined more than once", name.Wire))
+					c.addDiagnostic(item.GetSpan(), fmt.Sprintf("object field %q is defined more than once", name.Wire))
+				}
+				wireNames[name.Wire] = item
+				optional := false
+				if item.Condition != nil {
+					conditionType := c.checkExpression(item.Condition)
+					if !isBoolOrDynamic(conditionType) {
+						c.addDiagnostic(item.Condition.GetSpan(), "conditional object field expects a bool condition")
+					}
+					optional = true
+				}
+				field := valueField{
+					name: name, typeInfo: c.checkExpression(item.Value), optional: optional,
+					conditional: item.Condition != nil, span: item.GetSpan(),
+				}
+				result.sensitive = result.sensitive || field.typeInfo.sensitive
+				result.fields = mergeValueField(result.fields, field)
+			case syntax.ObjectSpread:
+				spreadType := c.checkExpression(item.Value)
+				switch spreadType.kind {
+				case valueObject:
+					for _, field := range spreadType.fields {
+						result.fields = mergeValueField(result.fields, field)
+					}
+					result.open = result.open || spreadType.open
+					result.sensitive = result.sensitive || spreadType.sensitive
+				case valueMap, valueDynamic:
+					result.open = true
+					result.sensitive = result.sensitive || spreadType.sensitive
+				default:
+					c.addDiagnostic(item.Value.GetSpan(), fmt.Sprintf("object spread expects object, map, or dynamic; got %s", valueTypeName(spreadType)))
+				}
+			case syntax.InputsSpread:
+				if item.Value != nil {
+					c.checkExpression(item.Value)
+				}
+				c.addDiagnostic(item.GetSpan(), "inputs forwarding is only valid in a module argument body")
 			}
 		}
-		return valueType{kind: valueString}
+		return result
+	case *syntax.TemplateExpression:
+		sensitive := false
+		for _, part := range value.Parts {
+			if part.Expression != nil {
+				sensitive = sensitive || c.checkExpression(part.Expression).sensitive
+			}
+		}
+		return valueType{kind: valueString, sensitive: sensitive}
 	case *syntax.UnaryExpression:
 		operand := c.checkExpression(value.Operand)
 		if value.Operator == syntax.TokenBang {
 			if operand.kind != valueBool && operand.kind != valueDynamic {
 				c.addDiagnostic(value.GetSpan(), "operator '!' expects a bool")
 			}
-			return valueType{kind: valueBool}
+			return valueType{kind: valueBool, sensitive: operand.sensitive}
 		}
 		if operand.kind != valueNumber && operand.kind != valueDynamic {
 			c.addDiagnostic(value.GetSpan(), "numeric unary operator expects a number")
 		}
-		return valueType{kind: valueNumber}
+		return valueType{kind: valueNumber, sensitive: operand.sensitive}
 	case *syntax.BinaryExpression:
 		left := c.checkExpression(value.Left)
 		right := c.checkExpression(value.Right)
@@ -909,19 +1309,19 @@ func (c *compiler) checkExpression(expression syntax.Expression) valueType {
 			if !isNumberOrDynamic(left) || !isNumberOrDynamic(right) {
 				c.addDiagnostic(value.GetSpan(), "arithmetic operators expect numbers")
 			}
-			return valueType{kind: valueNumber}
+			return valueType{kind: valueNumber, sensitive: left.sensitive || right.sensitive}
 		case syntax.TokenLess, syntax.TokenLessEqual, syntax.TokenGreater, syntax.TokenGreaterEqual:
 			if !isNumberOrDynamic(left) || !isNumberOrDynamic(right) {
 				c.addDiagnostic(value.GetSpan(), "ordering operators expect numbers")
 			}
-			return valueType{kind: valueBool}
+			return valueType{kind: valueBool, sensitive: left.sensitive || right.sensitive}
 		case syntax.TokenEqual, syntax.TokenNotEqual:
-			return valueType{kind: valueBool}
+			return valueType{kind: valueBool, sensitive: left.sensitive || right.sensitive}
 		case syntax.TokenAnd, syntax.TokenOr:
 			if !isBoolOrDynamic(left) || !isBoolOrDynamic(right) {
 				c.addDiagnostic(value.GetSpan(), "boolean operators expect bool operands")
 			}
-			return valueType{kind: valueBool}
+			return valueType{kind: valueBool, sensitive: left.sensitive || right.sensitive}
 		case syntax.TokenCoalesce:
 			if left.kind == valueNull {
 				return right
@@ -938,30 +1338,177 @@ func (c *compiler) checkExpression(expression syntax.Expression) valueType {
 		}
 		thenType := c.checkExpression(value.Then)
 		elseType := c.checkExpression(value.Else)
-		if isAssignable(thenType, elseType) && isAssignable(elseType, thenType) {
-			return thenType
+		if common, ok := commonType(thenType, elseType); ok {
+			common.sensitive = common.sensitive || condition.sensitive
+			return common
 		}
+		c.addDiagnostic(value.GetSpan(), "conditional expression branches have incompatible types")
 		return valueType{kind: valueDynamic}
 	case *syntax.MemberExpression:
-		c.checkExpression(value.Target)
-		return valueType{kind: valueDynamic}
+		targetType := c.checkExpression(value.Target)
+		if identifier, ok := value.Target.(*syntax.IdentifierExpression); ok {
+			if target := c.symbols[identifier.Name]; target != nil && target.kind == symbolResource && target.resource != nil && target.resource.conditional {
+				c.addDiagnostic(value.GetSpan(), fmt.Sprintf("conditional resource %q is a collection; index it before attribute access", identifier.Name))
+				return valueType{kind: valueDynamic}
+			}
+			if target := c.symbols[identifier.Name]; target != nil && target.kind == symbolModule && target.moduleContract != nil && target.valueType.kind == valueMap {
+				c.addDiagnostic(value.GetSpan(), fmt.Sprintf("iterated module %q is a collection; index it before output access", identifier.Name))
+				return valueType{kind: valueDynamic}
+			}
+		}
+		if targetType.kind == valueObject {
+			for _, field := range targetType.fields {
+				if field.name.Source == value.Name && field.name.Source != "" {
+					result := field.typeInfo
+					result.sensitive = result.sensitive || field.sensitive || targetType.sensitive
+					return result
+				}
+			}
+			if targetType.open {
+				return valueType{kind: valueDynamic, sensitive: targetType.sensitive}
+			}
+			c.addDiagnostic(value.GetSpan(), fmt.Sprintf("object has no field %q", value.Name))
+		}
+		return valueType{kind: valueDynamic, sensitive: targetType.sensitive}
 	case *syntax.IndexExpression:
-		c.checkExpression(value.Target)
+		targetType := c.checkExpression(value.Target)
 		c.checkExpression(value.Index)
-		return valueType{kind: valueDynamic}
+		if targetType.kind == valueObject {
+			if key, ok := literalString(value.Index); ok {
+				for _, field := range targetType.fields {
+					if field.name.Wire == key {
+						result := field.typeInfo
+						result.sensitive = result.sensitive || field.sensitive || targetType.sensitive
+						return result
+					}
+				}
+			}
+		}
+		if targetType.element != nil {
+			result := *targetType.element
+			result.sensitive = result.sensitive || targetType.sensitive
+			return result
+		}
+		return valueType{kind: valueDynamic, sensitive: targetType.sensitive}
 	case *syntax.CallExpression:
 		if _, ok := value.Callee.(*syntax.IdentifierExpression); !ok {
 			c.checkExpression(value.Callee)
 		}
+		sensitive := false
 		for _, argument := range value.Arguments {
-			c.checkExpression(argument)
+			sensitive = sensitive || c.checkExpression(argument).sensitive
 		}
-		return valueType{kind: valueDynamic}
+		return valueType{kind: valueDynamic, sensitive: sensitive}
 	}
 	return valueType{kind: valueDynamic}
 }
 
-func (c *compiler) encodeExpression(expression syntax.Expression, transformKeys bool) any {
+func iteratorTypes(collection valueType) (valueType, valueType) {
+	dynamic := valueType{kind: valueDynamic, sensitive: collection.sensitive}
+	withSensitivity := func(value valueType) valueType {
+		value.sensitive = value.sensitive || collection.sensitive
+		return value
+	}
+	switch collection.kind {
+	case valueMap:
+		if collection.element != nil {
+			return withSensitivity(valueType{kind: valueString}), withSensitivity(*collection.element)
+		}
+	case valueObject:
+		common := dynamic
+		for index, field := range collection.fields {
+			if index == 0 {
+				common = field.typeInfo
+				continue
+			}
+			if next, ok := commonType(common, field.typeInfo); ok {
+				common = next
+			} else {
+				common = dynamic
+			}
+		}
+		return withSensitivity(valueType{kind: valueString}), withSensitivity(common)
+	case valueSet:
+		if collection.element != nil && collection.element.kind == valueString {
+			return withSensitivity(*collection.element), withSensitivity(*collection.element)
+		}
+	case valueList:
+		if collection.element != nil {
+			return withSensitivity(valueType{kind: valueNumber}), withSensitivity(*collection.element)
+		}
+	case valueTuple:
+		common := dynamic
+		for index, item := range collection.tuple {
+			if index == 0 {
+				common = item
+				continue
+			}
+			if next, ok := commonType(common, item); ok {
+				common = next
+			} else {
+				common = dynamic
+			}
+		}
+		return withSensitivity(valueType{kind: valueNumber}), withSensitivity(common)
+	}
+	return dynamic, dynamic
+}
+
+func eachTypes(collection valueType) (valueType, valueType, bool) {
+	key, value := iteratorTypes(collection)
+	switch collection.kind {
+	case valueMap, valueObject:
+		return key, value, true
+	case valueSet:
+		if collection.element != nil && collection.element.kind == valueString {
+			return key, value, true
+		}
+	case valueDynamic:
+		return key, value, true
+	}
+	return key, value, false
+}
+
+func eachObjectType(key, value valueType) valueType {
+	return valueType{kind: valueObject, fields: []valueField{
+		{name: BindingName{Source: "key", Wire: "key"}, typeInfo: key},
+		{name: BindingName{Source: "value", Wire: "value"}, typeInfo: value},
+	}, sensitive: key.sensitive || value.sensitive}
+}
+
+func objectItems(expression *syntax.ObjectExpression) []syntax.ObjectItem {
+	if expression == nil {
+		return nil
+	}
+	if len(expression.Items) > 0 {
+		return expression.Items
+	}
+	items := make([]syntax.ObjectItem, 0, len(expression.Fields))
+	for _, field := range expression.Fields {
+		items = append(items, field)
+	}
+	return items
+}
+
+func mergeValueField(fields []valueField, next valueField) []valueField {
+	for index, field := range fields {
+		if field.name.Wire == next.name.Wire {
+			fields[index] = next
+			return fields
+		}
+	}
+	return append(fields, next)
+}
+
+func (c *compiler) encodeValue(expression syntax.Expression) any {
+	return c.encodeExpression(expression)
+}
+
+func (c *compiler) encodeBlockValue(expression syntax.Expression) any {
+	return c.encodeExpression(expression)
+}
+
+func (c *compiler) encodeExpression(expression syntax.Expression) any {
 	if number, ok := constantNumber(expression); ok {
 		return number
 	}
@@ -974,15 +1521,18 @@ func (c *compiler) encodeExpression(expression syntax.Expression, transformKeys 
 	case *syntax.ArrayExpression:
 		items := make([]any, 0, len(value.Items))
 		for _, item := range value.Items {
-			items = append(items, c.encodeExpression(item, transformKeys))
+			items = append(items, c.encodeExpression(item))
 		}
 		return items
 	case *syntax.ObjectExpression:
-		return c.encodeObject(value, transformKeys)
+		if object, ok := c.encodeStaticObject(value); ok {
+			return object
+		}
+		return "${" + c.renderObjectExpression(value) + "}"
 	case *syntax.TemplateExpression:
-		return c.renderTemplate(value, transformKeys)
+		return c.renderTemplate(value)
 	default:
-		return "${" + c.renderExpression(expression, transformKeys) + "}"
+		return "${" + c.renderExpression(expression) + "}"
 	}
 }
 
@@ -1009,28 +1559,97 @@ func constantNumber(expression syntax.Expression) (json.Number, bool) {
 	}
 }
 
-func (c *compiler) encodeObject(expression *syntax.ObjectExpression, transformKeys bool) map[string]any {
-	result := make(map[string]any, len(expression.Fields))
-	for _, field := range expression.Fields {
-		key := field.Name
-		if transformKeys && !field.Quoted {
-			key = toSnakeCase(key)
+func (c *compiler) encodeBlockBody(expression *syntax.ObjectExpression) map[string]any {
+	result := make(map[string]any)
+	for _, item := range objectItems(expression) {
+		switch item := item.(type) {
+		case syntax.ObjectField:
+			if item.Condition != nil {
+				conditionType := c.checkExpression(item.Condition)
+				if !isBoolOrDynamic(conditionType) {
+					continue
+				}
+				condition, constant := literalBool(item.Condition)
+				if !constant {
+					c.addDiagnostic(item.Condition.GetSpan(), "Terraform block fields must be statically known")
+					continue
+				}
+				if !condition {
+					continue
+				}
+			}
+			result[objectFieldName(item).Wire] = c.encodeExpression(item.Value)
+		case syntax.ObjectSpread:
+			if object, ok := item.Value.(*syntax.ObjectExpression); ok {
+				for key, value := range c.encodeBlockBody(object) {
+					result[key] = value
+				}
+				continue
+			}
+			spreadType := c.checkExpression(item.Value)
+			fixed := spreadType.kind == valueObject && !spreadType.open
+			if fixed {
+				for _, field := range spreadType.fields {
+					if field.conditional {
+						fixed = false
+						break
+					}
+				}
+			}
+			if !fixed {
+				if spreadType.kind == valueMap || spreadType.kind == valueDynamic || spreadType.open {
+					c.addDiagnostic(item.GetSpan(), "Terraform block spread must have a statically known object shape")
+				} else if spreadType.kind == valueObject {
+					c.addDiagnostic(item.GetSpan(), "Terraform block spread cannot contain runtime conditional fields")
+				}
+				continue
+			}
+			for _, field := range spreadType.fields {
+				result[field.name.Wire] = "${" + c.renderFieldAccess(item.Value, field.name) + "}"
+			}
 		}
-		if _, exists := result[key]; exists {
-			c.addDiagnostic(field.GetSpan(), fmt.Sprintf("object field %q is defined more than once", key))
-			continue
-		}
-		result[key] = c.encodeExpression(field.Value, transformKeys)
 	}
 	return result
 }
 
-func (c *compiler) renderTemplate(expression *syntax.TemplateExpression, transformKeys bool) string {
+func (c *compiler) encodeStaticObject(expression *syntax.ObjectExpression) (map[string]any, bool) {
+	result := make(map[string]any)
+	for _, item := range objectItems(expression) {
+		switch item := item.(type) {
+		case syntax.ObjectField:
+			if item.Condition != nil {
+				condition, ok := literalBool(item.Condition)
+				if !ok {
+					return nil, false
+				}
+				if !condition {
+					continue
+				}
+			}
+			result[objectFieldName(item).Wire] = c.encodeExpression(item.Value)
+		case syntax.ObjectSpread:
+			object, ok := item.Value.(*syntax.ObjectExpression)
+			if !ok {
+				return nil, false
+			}
+			spread, ok := c.encodeStaticObject(object)
+			if !ok {
+				return nil, false
+			}
+			for key, value := range spread {
+				result[key] = value
+			}
+		}
+	}
+	return result, true
+}
+
+func (c *compiler) renderTemplate(expression *syntax.TemplateExpression) string {
 	var result strings.Builder
 	for index, part := range expression.Parts {
 		if part.Expression != nil {
 			result.WriteString("${")
-			result.WriteString(c.renderExpression(part.Expression, transformKeys))
+			result.WriteString(c.renderExpression(part.Expression))
 			result.WriteByte('}')
 		} else {
 			text := part.Text
@@ -1046,7 +1665,7 @@ func (c *compiler) renderTemplate(expression *syntax.TemplateExpression, transfo
 	return result.String()
 }
 
-func (c *compiler) renderExpression(expression syntax.Expression, transformKeys bool) string {
+func (c *compiler) renderExpression(expression syntax.Expression) string {
 	switch value := expression.(type) {
 	case *syntax.IdentifierExpression:
 		symbol := c.symbols[value.Name]
@@ -1055,7 +1674,7 @@ func (c *compiler) renderExpression(expression syntax.Expression, transformKeys 
 		}
 		switch symbol.kind {
 		case symbolInput:
-			return "var." + value.Name
+			return "var." + symbol.name.Wire
 		case symbolLocal:
 			return "local." + value.Name
 		case symbolResource:
@@ -1084,7 +1703,7 @@ func (c *compiler) renderExpression(expression syntax.Expression, transformKeys 
 	case *syntax.ArrayExpression:
 		items := make([]string, 0, len(value.Items))
 		for _, item := range value.Items {
-			items = append(items, c.renderExpression(item, transformKeys))
+			items = append(items, c.renderExpression(item))
 		}
 		return "[" + strings.Join(items, ", ") + "]"
 	case *syntax.ForExpression:
@@ -1092,43 +1711,56 @@ func (c *compiler) renderExpression(expression syntax.Expression, transformKeys 
 		if value.KeyVariable != "" {
 			iterator = value.KeyVariable + ", " + value.ValueVariable
 		}
-		body := c.renderExpression(value.Value, transformKeys)
+		collectionType := c.checkExpression(value.Collection)
+		keyType, itemType := iteratorTypes(collectionType)
+		previousScope := c.scope
+		c.scope = newScope(previousScope)
+		if value.KeyVariable != "" {
+			c.scope.bindings[value.KeyVariable] = keyType
+		}
+		c.scope.bindings[value.ValueVariable] = itemType
+		body := c.renderExpression(value.Value)
 		opening, closing := "[", "]"
 		if value.Object {
 			opening, closing = "{", "}"
-			body = c.renderExpression(value.Key, transformKeys) + " => " + body
+			body = c.renderExpression(value.Key) + " => " + body
 		}
 		if value.Condition != nil {
-			body += " if " + c.renderExpression(value.Condition, transformKeys)
+			body += " if " + c.renderExpression(value.Condition)
 		}
-		return opening + "for " + iterator + " in " + c.renderExpression(value.Collection, transformKeys) + " : " + body + closing
+		c.scope = previousScope
+		return opening + "for " + iterator + " in " + c.renderExpression(value.Collection) + " : " + body + closing
 	case *syntax.ObjectExpression:
-		fields := make([]string, 0, len(value.Fields))
-		for _, field := range value.Fields {
-			key := field.Name
-			if transformKeys && !field.Quoted {
-				key = toSnakeCase(key)
-			}
-			fields = append(fields, quoteHCLString(key)+" = "+c.renderExpression(field.Value, transformKeys))
-		}
-		return "{" + strings.Join(fields, ", ") + "}"
+		return c.renderObjectExpression(value)
 	case *syntax.TemplateExpression:
-		return quoteHCLString(c.renderTemplate(value, transformKeys))
+		return quoteHCLString(c.renderTemplate(value))
 	case *syntax.UnaryExpression:
-		return tokenOperator(value.Operator) + c.renderExpression(value.Operand, transformKeys)
+		return tokenOperator(value.Operator) + c.renderExpression(value.Operand)
 	case *syntax.BinaryExpression:
-		left := c.renderExpression(value.Left, transformKeys)
-		right := c.renderExpression(value.Right, transformKeys)
+		left := c.renderExpression(value.Left)
+		right := c.renderExpression(value.Right)
 		if value.Operator == syntax.TokenCoalesce {
 			return "(" + left + " != null ? " + left + " : " + right + ")"
 		}
 		return "(" + left + " " + tokenOperator(value.Operator) + " " + right + ")"
 	case *syntax.ConditionalExpression:
-		return "(" + c.renderExpression(value.Condition, transformKeys) + " ? " + c.renderExpression(value.Then, transformKeys) + " : " + c.renderExpression(value.Else, transformKeys) + ")"
+		return "(" + c.renderExpression(value.Condition) + " ? " + c.renderExpression(value.Then) + " : " + c.renderExpression(value.Else) + ")"
 	case *syntax.MemberExpression:
-		return c.renderExpression(value.Target, transformKeys) + "." + value.Name
+		target := c.renderExpression(value.Target)
+		targetType := c.checkExpression(value.Target)
+		if targetType.kind == valueObject {
+			for _, field := range targetType.fields {
+				if field.name.Source == value.Name && field.name.Source != "" {
+					if syntax.IsTerraformIdentifier(field.name.Wire) {
+						return target + "." + field.name.Wire
+					}
+					return target + "[" + quoteHCLString(field.name.Wire) + "]"
+				}
+			}
+		}
+		return target + "." + value.Name
 	case *syntax.IndexExpression:
-		return c.renderExpression(value.Target, transformKeys) + "[" + c.renderExpression(value.Index, transformKeys) + "]"
+		return c.renderExpression(value.Target) + "[" + c.renderExpression(value.Index) + "]"
 	case *syntax.CallExpression:
 		if identifier, ok := value.Callee.(*syntax.IdentifierExpression); ok && identifier.Name == "address" && len(value.Arguments) == 1 {
 			if address, ok := literalString(value.Arguments[0]); ok {
@@ -1137,18 +1769,78 @@ func (c *compiler) renderExpression(expression syntax.Expression, transformKeys 
 		}
 		arguments := make([]string, 0, len(value.Arguments))
 		for _, argument := range value.Arguments {
-			arguments = append(arguments, c.renderExpression(argument, transformKeys))
+			arguments = append(arguments, c.renderExpression(argument))
 		}
-		return c.renderExpression(value.Callee, transformKeys) + "(" + strings.Join(arguments, ", ") + ")"
+		return c.renderExpression(value.Callee) + "(" + strings.Join(arguments, ", ") + ")"
 	}
 	return "null"
+}
+
+func (c *compiler) renderObjectExpression(expression *syntax.ObjectExpression) string {
+	var fragments []string
+	var fields []string
+	flushFields := func() {
+		if len(fields) == 0 {
+			return
+		}
+		fragments = append(fragments, "{"+strings.Join(fields, ", ")+"}")
+		fields = nil
+	}
+	for _, item := range objectItems(expression) {
+		switch item := item.(type) {
+		case syntax.ObjectField:
+			field := quoteHCLString(objectFieldName(item).Wire) + " = " + c.renderExpression(item.Value)
+			if item.Condition == nil {
+				fields = append(fields, field)
+				continue
+			}
+			flushFields()
+			fragments = append(fragments, "("+c.renderExpression(item.Condition)+" ? {"+field+"} : {})")
+		case syntax.ObjectSpread:
+			flushFields()
+			fragments = append(fragments, c.renderExpression(item.Value))
+		}
+	}
+	flushFields()
+	if len(fragments) == 0 {
+		return "{}"
+	}
+	if len(fragments) == 1 {
+		return fragments[0]
+	}
+	return "merge(" + strings.Join(fragments, ", ") + ")"
+}
+
+func (c *compiler) renderFieldAccess(target syntax.Expression, name BindingName) string {
+	rendered := c.renderExpression(target)
+	if name.Source != "" && syntax.IsTerraformIdentifier(name.Wire) {
+		return rendered + "." + name.Wire
+	}
+	return rendered + "[" + quoteHCLString(name.Wire) + "]"
+}
+
+func literalBool(expression syntax.Expression) (bool, bool) {
+	literal, ok := expression.(*syntax.LiteralExpression)
+	if !ok {
+		return false, false
+	}
+	value, ok := literal.Value.(bool)
+	return value, ok
+}
+
+func includedObjectField(field syntax.ObjectField) bool {
+	if field.Condition == nil {
+		return true
+	}
+	condition, constant := literalBool(field.Condition)
+	return constant && condition
 }
 
 func (c *compiler) encodeStaticTraversals(expression syntax.Expression) any {
 	array, ok := expression.(*syntax.ArrayExpression)
 	if !ok {
 		c.addDiagnostic(expression.GetSpan(), "static traversal metadata must be an array")
-		return c.encodeExpression(expression, false)
+		return c.encodeValue(expression)
 	}
 	result := make([]any, 0, len(array.Items))
 	for _, item := range array.Items {
@@ -1160,7 +1852,7 @@ func (c *compiler) encodeStaticTraversals(expression syntax.Expression) any {
 				}
 			}
 		}
-		result = append(result, c.renderExpression(item, false))
+		result = append(result, c.renderExpression(item))
 	}
 	return result
 }
@@ -1169,18 +1861,23 @@ func (c *compiler) encodeLifecycle(expression syntax.Expression) any {
 	object, ok := expression.(*syntax.ObjectExpression)
 	if !ok {
 		c.addDiagnostic(expression.GetSpan(), "lifecycle metadata must be an object")
-		return c.encodeExpression(expression, true)
+		return c.encodeBlockValue(expression)
 	}
-	result := make(map[string]any, len(object.Fields))
+	result := c.encodeBlockBody(object)
 	for _, field := range object.Fields {
-		key := field.Name
-		if !field.Quoted {
-			key = toSnakeCase(key)
+		if !includedObjectField(field) {
+			continue
 		}
+		key := objectFieldName(field).Wire
 		if key == "ignore_changes" || key == "replace_triggered_by" {
 			result[key] = c.encodeStaticTraversals(field.Value)
 		} else {
-			result[key] = c.encodeExpression(field.Value, true)
+			result[key] = c.encodeBlockValue(field.Value)
+		}
+	}
+	for _, key := range []string{"ignore_changes", "replace_triggered_by"} {
+		if field, found := objectField(object, key); found {
+			result[key] = c.encodeStaticTraversals(field.Value)
 		}
 	}
 	return result
@@ -1200,9 +1897,16 @@ func isConstant(expression syntax.Expression) bool {
 		}
 		return true
 	case *syntax.ObjectExpression:
-		for _, field := range value.Fields {
-			if !isConstant(field.Value) {
-				return false
+		for _, item := range objectItems(value) {
+			switch item := item.(type) {
+			case syntax.ObjectField:
+				if !isConstant(item.Value) || item.Condition != nil && !isConstant(item.Condition) {
+					return false
+				}
+			case syntax.ObjectSpread:
+				if !isConstant(item.Value) {
+					return false
+				}
 			}
 		}
 		return true
@@ -1241,7 +1945,7 @@ func renderConstant(expression syntax.Expression) string {
 	case *syntax.ObjectExpression:
 		fields := make([]string, 0, len(value.Fields))
 		for _, field := range value.Fields {
-			fields = append(fields, field.Name+" = "+renderConstant(field.Value))
+			fields = append(fields, objectFieldName(field).Wire+" = "+renderConstant(field.Value))
 		}
 		return "{" + strings.Join(fields, ", ") + "}"
 	}
@@ -1249,14 +1953,35 @@ func renderConstant(expression syntax.Expression) string {
 }
 
 func hasObjectField(object *syntax.ObjectExpression, names ...string) bool {
-	for _, field := range object.Fields {
-		for _, name := range names {
-			if field.Name == name {
-				return true
+	_, ok := objectField(object, names...)
+	return ok
+}
+
+func objectField(object *syntax.ObjectExpression, names ...string) (syntax.ObjectField, bool) {
+	if object == nil {
+		return syntax.ObjectField{}, false
+	}
+	items := objectItems(object)
+	for index := len(items) - 1; index >= 0; index-- {
+		switch item := items[index].(type) {
+		case syntax.ObjectField:
+			if !includedObjectField(item) {
+				continue
+			}
+			for _, name := range names {
+				if item.Name == name || objectFieldName(item).Wire == name {
+					return item, true
+				}
+			}
+		case syntax.ObjectSpread:
+			if spread, ok := item.Value.(*syntax.ObjectExpression); ok {
+				if field, found := objectField(spread, names...); found {
+					return field, true
+				}
 			}
 		}
 	}
-	return false
+	return syntax.ObjectField{}, false
 }
 
 func literalString(expression syntax.Expression) (string, bool) {
@@ -1276,25 +2001,8 @@ func providerLocalName(source string) string {
 	return toSnakeCase(name)
 }
 
-var nonIdentifier = regexp.MustCompile(`[^a-zA-Z0-9_]+`)
-
 func toSnakeCase(value string) string {
-	value = nonIdentifier.ReplaceAllString(value, "_")
-	var result strings.Builder
-	for index, current := range value {
-		if unicode.IsUpper(current) {
-			if index > 0 {
-				previous := rune(value[index-1])
-				if previous != '_' && (unicode.IsLower(previous) || unicode.IsDigit(previous)) {
-					result.WriteByte('_')
-				}
-			}
-			result.WriteRune(unicode.ToLower(current))
-		} else {
-			result.WriteRune(current)
-		}
-	}
-	return strings.Trim(result.String(), "_")
+	return syntax.SourceNameToWire(value)
 }
 
 func tokenOperator(kind syntax.TokenKind) string {
@@ -1364,19 +2072,6 @@ func quoteHCLString(value string) string {
 	return result.String()
 }
 
-func isAssignable(expected, actual valueType) bool {
-	if expected.kind == valueDynamic || actual.kind == valueDynamic || actual.kind == valueNull {
-		return true
-	}
-	if expected.kind != actual.kind {
-		return false
-	}
-	if expected.element != nil && actual.element != nil {
-		return isAssignable(*expected.element, *actual.element)
-	}
-	return true
-}
-
 func (c *compiler) inputDefaultAssignable(expected valueType, expression syntax.Expression) bool {
 	if expected.kind == valueDynamic {
 		return true
@@ -1415,6 +2110,112 @@ func (c *compiler) inputDefaultAssignable(expected valueType, expression syntax.
 	}
 }
 
+func (c *compiler) checkAssignment(expected, actual valueType, span syntax.Span, context string) bool {
+	if expected.kind == valueDynamic || actual.kind == valueDynamic || actual.kind == valueNull {
+		return true
+	}
+	if expected.kind == valueObject {
+		if actual.kind != valueObject {
+			c.addDiagnostic(span, fmt.Sprintf("%s has incompatible type: expected object, got %s", context, diagnosticTypeDescription(actual)))
+			return false
+		}
+		actualFields := make(map[string]valueField, len(actual.fields))
+		actualSources := make(map[string]valueField, len(actual.fields))
+		for _, field := range actual.fields {
+			actualFields[field.name.Wire] = field
+			if field.name.Source != "" {
+				actualSources[field.name.Source] = field
+			}
+		}
+		valid := true
+		for _, field := range expected.fields {
+			actualField, exists := actualFields[field.name.Wire]
+			if !exists && field.name.Source != "" {
+				actualField, exists = actualSources[field.name.Source]
+			}
+			fieldContext := context + "." + field.name.Wire
+			if !exists {
+				if field.optional || field.defaulted || actual.open {
+					continue
+				}
+				c.addDiagnostic(span, fmt.Sprintf("%s is required", fieldContext))
+				valid = false
+				continue
+			}
+			if !c.checkAssignment(field.typeInfo, actualField.typeInfo, actualField.span, fieldContext) {
+				valid = false
+			}
+		}
+		return valid
+	}
+	if expected.kind == valueList || expected.kind == valueSet {
+		if actual.kind == valueTuple && expected.element != nil {
+			valid := true
+			for index, item := range actual.tuple {
+				if !c.checkAssignment(*expected.element, item, span, fmt.Sprintf("%s[%d]", context, index)) {
+					valid = false
+				}
+			}
+			return valid
+		}
+	}
+	if expected.kind == valueMap && actual.kind == valueObject && expected.element != nil {
+		valid := true
+		for _, field := range actual.fields {
+			if !c.checkAssignment(*expected.element, field.typeInfo, field.span, context+"["+strconv.Quote(field.name.Wire)+"]") {
+				valid = false
+			}
+		}
+		return valid
+	}
+	if !isAssignable(expected, actual) {
+		c.addDiagnostic(span, fmt.Sprintf("%s has incompatible type: expected %s, got %s", context, diagnosticTypeDescription(expected), diagnosticTypeDescription(actual)))
+		return false
+	}
+	return true
+}
+
+func (c *compiler) encodeValueWithDefaults(expression syntax.Expression, expected valueType) any {
+	return c.completeDefaults(c.encodeValue(expression), expected)
+}
+
+func (c *compiler) completeDefaults(encoded any, expected valueType) any {
+	switch expected.kind {
+	case valueObject:
+		object, ok := encoded.(map[string]any)
+		if !ok {
+			return encoded
+		}
+		for _, field := range expected.fields {
+			value, exists := object[field.name.Wire]
+			if !exists && field.name.Source != "" {
+				sourceWire := syntax.SourceNameToWire(field.name.Source)
+				if sourceValue, sourceExists := object[sourceWire]; sourceExists {
+					value, exists = sourceValue, true
+					delete(object, sourceWire)
+					object[field.name.Wire] = sourceValue
+				}
+			}
+			if !exists {
+				if field.defaultValue != nil {
+					object[field.name.Wire] = c.completeDefaults(c.encodeValue(field.defaultValue), field.typeInfo)
+				}
+				continue
+			}
+			object[field.name.Wire] = c.completeDefaults(value, field.typeInfo)
+		}
+	case valueList, valueSet:
+		items, ok := encoded.([]any)
+		if !ok || expected.element == nil {
+			return encoded
+		}
+		for index, item := range items {
+			items[index] = c.completeDefaults(item, *expected.element)
+		}
+	}
+	return encoded
+}
+
 func isReservedName(name string) bool {
 	switch name {
 	case "true", "false", "null", "none":
@@ -1433,20 +2234,16 @@ func isBoolOrDynamic(value valueType) bool {
 }
 
 func (c *compiler) addDiagnostic(span syntax.Span, message string) {
-	c.diagnostics = append(c.diagnostics, syntax.Diagnostic{
-		Filename: c.file.Name,
-		Span:     span,
-		Message:  message,
-	})
+	file := span.File
+	if file == "" {
+		file = c.file.ID
+	}
+	if file == "" {
+		file = syntax.FileID(c.file.Name)
+	}
+	c.diagnostics = append(c.diagnostics, syntax.NewDiagnostic(file, span, "COMPILER_ERROR", message))
 }
 
 func SortedDiagnostics(diagnostics []syntax.Diagnostic) []syntax.Diagnostic {
-	result := append([]syntax.Diagnostic(nil), diagnostics...)
-	sort.SliceStable(result, func(i, j int) bool {
-		if result[i].Filename != result[j].Filename {
-			return result[i].Filename < result[j].Filename
-		}
-		return result[i].Span.Start.Offset < result[j].Span.Start.Offset
-	})
-	return result
+	return syntax.SortDiagnostics(diagnostics)
 }

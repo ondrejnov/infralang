@@ -7,44 +7,16 @@ provider Lvm from "github.com/ondrejnov/lvm" version "0.5.0"
 configure libvirt = Libvirt
 configure lvm = Lvm
 
-input common_config: object {
-  base_image_path: string,
-  bootstrap_root: string,
-  bridge: string,
-  cloudinit_directory: string,
-  cloudinit_pool: string,
-  gateway: string,
-  interface_name: string,
-  mtu: number,
-  prefix_length: number,
-  remote_host: string,
-  remote_certificate_path?: string = "~/.ssh/id_rsa-cert.pub",
-  remote_private_key_path?: string = "~/.ssh/id_rsa",
-  remote_user?: string = "root",
-  ssh_authorized_keys: list<string>,
-  volume_group: string,
-} with { description: "Configuration shared by all VMs on this libvirt host." }
-
-input network_name: string with {
-  description: "Name of the routed libvirt network.",
-  validations: [{
-    condition: length(trimspace(network_name)) > 0,
-    errorMessage: "network_name must not be empty.",
-  }],
+input commonConfig "common_config": CommonConfig with {
+  description: "Configuration shared by all VMs on this libvirt host.",
 }
 
-input vms: map<object {
-  adopt_existing?: bool = false,
-  cpu_mode?: string,
-  data_disk_size_gib?: number,
-  disk_size_gib?: number = 10,
-  ip_address: string,
-  qemu_guest_agent_enabled?: bool = false,
-  ram_mb?: number = 1024,
-  running?: bool = true,
-  serial_console_enabled?: bool = false,
-  vcpu?: number = 2,
-}> with {
+input networkName "network_name": string with {
+  description: "Name of the routed libvirt network.",
+  validate length(trimspace(networkName)) > 0 else "network_name must not be empty.",
+}
+
+input vms: map<VmConfig> with {
   description: "Virtual machines managed on this libvirt host, keyed by hostname.",
   validations: [{
     condition: length(vms) > 0,
@@ -53,39 +25,36 @@ input vms: map<object {
 }
 
 resource network = libvirt.network("main", {
-  name: network_name,
+  name: networkName,
   autostart: true,
-  bridge: { delay: "0", name: common_config.bridge, stp: "on" },
+  bridge: { delay: "0", name: commonConfig.bridge, stp: "on" },
   forward: { mode: "route" },
-  ips: [{ address: common_config.gateway, family: "ipv4", prefix: common_config.prefix_length }],
-  mtu: { size: common_config.mtu },
+  ips: [{ address: commonConfig.gateway, family: "ipv4", prefix: commonConfig.prefixLength }],
+  mtu: { size: commonConfig.mtu },
 })
 
 resource cloudinitPool = libvirt.pool("cloudinit", {
-  name: common_config.cloudinit_pool,
+  name: commonConfig.cloudinitPool,
   type: "dir",
-  target: { path: common_config.cloudinit_directory },
+  target: { path: commonConfig.cloudinitDirectory },
   create: { autostart: true, build: true, start: true },
   destroy: { delete: false },
 })
 
 module vmModule "vm" from "../libvirt_vm" {
-  adoptExisting: each.value.adopt_existing,
-  commonConfig: common_config,
-  cpuMode: each.value.cpu_mode,
-  dataDiskSizeGib: each.value.data_disk_size_gib,
-  diskSizeGib: each.value.disk_size_gib,
+  adoptExisting: each.value.adoptExisting,
+  commonConfig,
+  cpuMode: each.value.cpuMode,
+  dataDiskSizeGib: each.value.dataDiskSizeGib,
+  diskSizeGib: each.value.diskSizeGib,
   hostname: each.key,
-  ipAddress: each.value.ip_address,
-  qemuGuestAgentEnabled: each.value.qemu_guest_agent_enabled,
-  ramMb: each.value.ram_mb,
+  ipAddress: each.value.ipAddress,
+  qemuGuestAgentEnabled: each.value.qemuGuestAgentEnabled,
+  ramMb: each.value.ramMb,
   running: each.value.running,
-  serialConsoleEnabled: each.value.serial_console_enabled,
+  serialConsoleEnabled: each.value.serialConsoleEnabled,
   vcpu: each.value.vcpu,
-} using {
-  libvirt: libvirt,
-  lvm: lvm,
-} with {
+} using [libvirt, lvm] with {
   forEach: vms,
   dependsOn: [network, cloudinitPool],
 }

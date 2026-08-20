@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/ondrejnov/infralang/internal/compiler"
+	"github.com/ondrejnov/infralang/internal/project"
 	"github.com/ondrejnov/infralang/internal/syntax"
 )
 
@@ -156,94 +157,15 @@ func runCheck(arguments []string) error {
 }
 
 func compileProject(root string) ([]buildArtifact, []syntax.Diagnostic, error) {
-	root, err := filepath.Abs(root)
+	result, err := project.Compile(root)
 	if err != nil {
-		return nil, nil, fmt.Errorf("resolve %s: %w", root, err)
+		return nil, nil, err
 	}
-	var artifacts []buildArtifact
-	var diagnostics []syntax.Diagnostic
-	visited := make(map[string]bool)
-	visiting := make(map[string]bool)
-
-	var compileDirectory func(string) error
-	compileDirectory = func(directory string) error {
-		directory = filepath.Clean(directory)
-		if visited[directory] {
-			return nil
-		}
-		if visiting[directory] {
-			return fmt.Errorf("local module dependency cycle at %s", directory)
-		}
-		visiting[directory] = true
-		defer delete(visiting, directory)
-
-		entries, err := os.ReadDir(directory)
-		if err != nil {
-			return fmt.Errorf("read module directory %s: %w", directory, err)
-		}
-		var files []*syntax.File
-		for _, entry := range entries {
-			if entry.IsDir() || filepath.Ext(entry.Name()) != ".infra" {
-				continue
-			}
-			path := filepath.Join(directory, entry.Name())
-			source, err := os.ReadFile(path)
-			if err != nil {
-				return fmt.Errorf("read %s: %w", path, err)
-			}
-			file, parseDiagnostics := syntax.Parse(path, string(source))
-			diagnostics = append(diagnostics, parseDiagnostics...)
-			files = append(files, file)
-		}
-		if len(files) == 0 {
-			return fmt.Errorf("module directory %s contains no .infra files", directory)
-		}
-		if len(diagnostics) > 0 {
-			return nil
-		}
-
-		combined := &syntax.File{Name: files[0].Name}
-		for _, file := range files {
-			combined.Declarations = append(combined.Declarations, file.Declarations...)
-		}
-		result, compileDiagnostics := compiler.Compile(combined)
-		diagnostics = append(diagnostics, compileDiagnostics...)
-		if len(compileDiagnostics) > 0 {
-			return nil
-		}
-		artifacts = append(artifacts, buildArtifact{directory: directory, result: result})
-
-		for _, declaration := range combined.Declarations {
-			module, ok := declaration.(*syntax.ModuleDeclaration)
-			if !ok || !strings.HasPrefix(module.Source, ".") {
-				continue
-			}
-			moduleDirectory := filepath.Clean(filepath.Join(directory, module.Source))
-			moduleEntries, err := os.ReadDir(moduleDirectory)
-			if err != nil {
-				return fmt.Errorf("read local module %s: %w", moduleDirectory, err)
-			}
-			hasInfra := false
-			for _, entry := range moduleEntries {
-				if !entry.IsDir() && filepath.Ext(entry.Name()) == ".infra" {
-					hasInfra = true
-					break
-				}
-			}
-			if hasInfra {
-				if err := compileDirectory(moduleDirectory); err != nil {
-					return err
-				}
-			}
-		}
-		visited[directory] = true
-		return nil
+	artifacts := make([]buildArtifact, 0, len(result.Artifacts))
+	for _, artifact := range result.Artifacts {
+		artifacts = append(artifacts, buildArtifact{directory: artifact.Directory, result: artifact.Data})
 	}
-
-	if err := compileDirectory(root); err != nil {
-		return nil, compiler.SortedDiagnostics(diagnostics), err
-	}
-	return artifacts, compiler.SortedDiagnostics(diagnostics), nil
+	return artifacts, result.Diagnostics, nil
 }
 
 func compileFile(sourcePath string) ([]byte, []syntax.Diagnostic, error) {

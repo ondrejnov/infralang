@@ -24,7 +24,7 @@ func Lex(filename, source string) ([]Token, []Diagnostic) {
 		column:   1,
 	}
 	l.run()
-	return l.tokens, l.diagnostics
+	return l.tokens, SortDiagnostics(l.diagnostics)
 }
 
 func (l *lexer) run() {
@@ -54,23 +54,23 @@ func (l *lexer) run() {
 			l.scanString(start, TokenString)
 			continue
 		}
+		if ch == '`' {
+			l.scanRawAddress(start)
+			continue
+		}
 
 		if l.scanOperator(start) {
 			continue
 		}
 
 		l.advance()
-		span := Span{Start: start, End: l.position()}
+		span := l.span(start, l.position())
 		l.tokens = append(l.tokens, Token{Kind: TokenIllegal, Lexeme: string(ch), Span: span})
-		l.diagnostics = append(l.diagnostics, Diagnostic{
-			Filename: l.filename,
-			Span:     span,
-			Message:  fmt.Sprintf("unexpected character %q", ch),
-		})
+		l.diagnostics = append(l.diagnostics, NewDiagnostic(FileID(l.filename), span, "LEX_UNEXPECTED_CHARACTER", fmt.Sprintf("unexpected character %q", ch)))
 	}
 
 	pos := l.position()
-	l.tokens = append(l.tokens, Token{Kind: TokenEOF, Span: Span{Start: pos, End: pos}})
+	l.tokens = append(l.tokens, Token{Kind: TokenEOF, Span: l.span(pos, pos)})
 }
 
 func (l *lexer) skipWhitespaceAndComments() {
@@ -110,11 +110,7 @@ func (l *lexer) skipBlockComment() {
 		}
 		l.advance()
 	}
-	l.diagnostics = append(l.diagnostics, Diagnostic{
-		Filename: l.filename,
-		Span:     Span{Start: start, End: l.position()},
-		Message:  "unterminated block comment",
-	})
+	l.diagnostics = append(l.diagnostics, NewDiagnostic(FileID(l.filename), l.span(start, l.position()), "LEX_UNTERMINATED_COMMENT", "unterminated block comment"))
 }
 
 func (l *lexer) scanIdentifier(start Position) {
@@ -125,7 +121,7 @@ func (l *lexer) scanIdentifier(start Position) {
 	l.tokens = append(l.tokens, Token{
 		Kind:   TokenIdentifier,
 		Lexeme: l.source[begin:l.offset],
-		Span:   Span{Start: start, End: l.position()},
+		Span:   l.span(start, l.position()),
 	})
 }
 
@@ -159,7 +155,7 @@ func (l *lexer) scanNumber(start Position) {
 	l.tokens = append(l.tokens, Token{
 		Kind:   TokenNumber,
 		Lexeme: l.source[begin:l.offset],
-		Span:   Span{Start: start, End: l.position()},
+		Span:   l.span(start, l.position()),
 	})
 }
 
@@ -184,17 +180,13 @@ func (l *lexer) scanString(start Position, kind TokenKind) {
 			raw := l.source[quoteStart:l.offset]
 			value, err := strconv.Unquote(raw)
 			if err != nil {
-				l.diagnostics = append(l.diagnostics, Diagnostic{
-					Filename: l.filename,
-					Span:     Span{Start: start, End: l.position()},
-					Message:  fmt.Sprintf("invalid string: %v", err),
-				})
+				l.diagnostics = append(l.diagnostics, NewDiagnostic(FileID(l.filename), l.span(start, l.position()), "LEX_INVALID_STRING", fmt.Sprintf("invalid string: %v", err)))
 				value = raw[1 : len(raw)-1]
 			}
 			l.tokens = append(l.tokens, Token{
 				Kind:   kind,
 				Lexeme: value,
-				Span:   Span{Start: start, End: l.position()},
+				Span:   l.span(start, l.position()),
 			})
 			return
 		}
@@ -203,18 +195,39 @@ func (l *lexer) scanString(start Position, kind TokenKind) {
 		}
 	}
 
-	span := Span{Start: start, End: l.position()}
+	span := l.span(start, l.position())
 	l.tokens = append(l.tokens, Token{Kind: TokenIllegal, Span: span})
-	l.diagnostics = append(l.diagnostics, Diagnostic{
-		Filename: l.filename,
-		Span:     span,
-		Message:  "unterminated string",
-	})
+	l.diagnostics = append(l.diagnostics, NewDiagnostic(FileID(l.filename), span, "LEX_UNTERMINATED_STRING", "unterminated string"))
+}
+
+func (l *lexer) scanRawAddress(start Position) {
+	l.advance()
+	begin := l.offset
+	for !l.atEnd() && l.peek(0) != '`' {
+		l.advance()
+	}
+	if l.atEnd() {
+		span := l.span(start, l.position())
+		l.tokens = append(l.tokens, Token{Kind: TokenIllegal, Span: span})
+		l.diagnostics = append(l.diagnostics, NewDiagnostic(FileID(l.filename), span, "LEX_UNTERMINATED_RAW_ADDRESS", "unterminated raw address"))
+		return
+	}
+	value := l.source[begin:l.offset]
+	l.advance()
+	l.tokens = append(l.tokens, Token{Kind: TokenRawAddress, Lexeme: value, Span: l.span(start, l.position())})
 }
 
 func (l *lexer) scanOperator(start Position) bool {
+	if l.sourceSlice(3) == "..." {
+		l.advance()
+		l.advance()
+		l.advance()
+		l.tokens = append(l.tokens, Token{Kind: TokenEllipsis, Lexeme: "...", Span: l.span(start, l.position())})
+		return true
+	}
 	twoCharacter := map[string]TokenKind{
-		"=>": TokenArrow,
+		"->": TokenArrow,
+		"=>": TokenFatArrow,
 		"==": TokenEqual,
 		"!=": TokenNotEqual,
 		"<=": TokenLessEqual,
@@ -227,7 +240,7 @@ func (l *lexer) scanOperator(start Position) bool {
 		lexeme := l.sourceSlice(2)
 		l.advance()
 		l.advance()
-		l.tokens = append(l.tokens, Token{Kind: kind, Lexeme: lexeme, Span: Span{Start: start, End: l.position()}})
+		l.tokens = append(l.tokens, Token{Kind: kind, Lexeme: lexeme, Span: l.span(start, l.position())})
 		return true
 	}
 
@@ -255,7 +268,7 @@ func (l *lexer) scanOperator(start Position) bool {
 	}
 	if kind, ok := oneCharacter[l.peek(0)]; ok {
 		lexeme := string(l.advance())
-		l.tokens = append(l.tokens, Token{Kind: kind, Lexeme: lexeme, Span: Span{Start: start, End: l.position()}})
+		l.tokens = append(l.tokens, Token{Kind: kind, Lexeme: lexeme, Span: l.span(start, l.position())})
 		return true
 	}
 	return false
@@ -298,6 +311,10 @@ func (l *lexer) advance() byte {
 
 func (l *lexer) position() Position {
 	return Position{Offset: l.offset, Line: l.line, Column: l.column}
+}
+
+func (l *lexer) span(start, end Position) Span {
+	return Span{File: FileID(l.filename), Start: start, End: end}
 }
 
 func isIdentifierStart(ch byte) bool {
