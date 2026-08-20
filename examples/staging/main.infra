@@ -5,9 +5,24 @@ terraform {
 provider Libvirt from "dmacvicar/libvirt" version "~> 0.9.3"
 provider Lvm from "github.com/ondrejnov/lvm" version "0.5.0"
 
-# The snake_case input name intentionally remains compatible with the current
-# terraform-staging/terraform.tfvars file.
-input vm_defaults: dynamic
+# The snake_case name preserves compatibility with terraform.tfvars.
+input vm_defaults: object {
+  base_image_path: string,
+  bootstrap_root: string,
+  bridge: string,
+  cloudinit_directory: string,
+  cloudinit_pool: string,
+  interface_name: string,
+  mtu: number,
+  prefix_length: number,
+  remote_certificate_path?: string = "~/.ssh/id_rsa-cert.pub",
+  remote_private_key_path?: string = "~/.ssh/id_rsa",
+  remote_user?: string = "root",
+  ssh_authorized_keys: list<string>,
+  volume_group: string,
+} with {
+  description: "Configuration shared by all libvirt VM module instances.",
+}
 
 let db1Common = merge(vm_defaults, {
   gateway: "10.0.1.254",
@@ -45,39 +60,18 @@ module hostDb1 "host_db1" from "./modules/libvirt_host" {
   commonConfig: db1Common,
   networkName: "staging",
   vms: {
-    db1: {
-      diskSizeGib: 5,
-      ipAddress: "10.0.1.10",
-    },
-    kube: {
-      cpuMode: "host-model",
-      ipAddress: "10.0.1.20",
-      ramMb: 1900,
-      vcpu: 6,
-    },
-    nfs: {
-      ipAddress: "10.0.1.11",
-      ramMb: 512,
-    },
+    db1: { diskSizeGib: 5, ipAddress: "10.0.1.10" },
+    kube: { cpuMode: "host-model", ipAddress: "10.0.1.20", ramMb: 1700, vcpu: 6 },
+    nfs: { ipAddress: "10.0.1.11", ramMb: 512 },
     pg1: {
       diskSizeGib: 10,
       ipAddress: "10.0.1.12",
       qemuGuestAgentEnabled: true,
-      ramMb: 768,
+      ramMb: 512,
       vcpu: 1,
     },
-    node1: {
-      cpuMode: "host-model",
-      ipAddress: "10.0.1.21",
-      ramMb: 1200,
-      vcpu: 6,
-    },
-    node2: {
-      cpuMode: "host-model",
-      ipAddress: "10.0.1.22",
-      ramMb: 1200,
-      vcpu: 6,
-    },
+    node1: { cpuMode: "host-model", ipAddress: "10.0.1.21", ramMb: 1200, vcpu: 6 },
+    node2: { cpuMode: "host-model", ipAddress: "10.0.1.22", ramMb: 1200, vcpu: 6 },
   },
 } using {
   libvirt: libvirtDb1,
@@ -88,58 +82,50 @@ module hostDb2 "host_db2" from "./modules/libvirt_host" {
   commonConfig: db2Common,
   networkName: "staging",
   vms: {
-    db2: {
-      diskSizeGib: 5,
-      ipAddress: "10.0.2.10",
-    },
-    kube: {
-      ipAddress: "10.0.2.20",
-      ramMb: 1900,
-    },
-    nfs2: {
-      ipAddress: "10.0.2.11",
-      ramMb: 512,
-    },
+    db2: { diskSizeGib: 5, ipAddress: "10.0.2.10" },
+    kube: { ipAddress: "10.0.2.20", ramMb: 1700 },
+    nfs2: { ipAddress: "10.0.2.11", ramMb: 512 },
     pg2: {
       diskSizeGib: 10,
       ipAddress: "10.0.2.12",
       qemuGuestAgentEnabled: true,
-      ramMb: 768,
+      ramMb: 512,
       vcpu: 1,
     },
-    node1: {
-      ipAddress: "10.0.2.21",
-      ramMb: 1000,
-    },
-    node2: {
-      ipAddress: "10.0.2.22",
-      ramMb: 1000,
-    },
+    node1: { ipAddress: "10.0.2.21", ramMb: 1000 },
+    node2: { ipAddress: "10.0.2.22", ramMb: 1000 },
   },
 } using {
   libvirt: libvirtDb2,
   lvm: lvmDb2,
 }
 
-output db1 = hostDb1.vms["db1"]
-output db2 = hostDb2.vms["db2"]
-
-output kubernetes = {
-  kube: hostDb1.vms["kube"],
-  node1: hostDb1.vms["node1"],
-  node2: hostDb1.vms["node2"],
+output db1 = hostDb1.vms["db1"] with { description: "Created db1 VM details." }
+output db2 = hostDb2.vms["db2"] with { description: "Created db2 VM details." }
+output kubernetes = {for hostname in ["kube", "node1", "node2"]: hostname => hostDb1.vms[hostname]} with {
+  description: "Created Kubernetes VM details.",
 }
-
-output kubernetes2 = {
-  kube: hostDb2.vms["kube"],
-  node1: hostDb2.vms["node1"],
-  node2: hostDb2.vms["node2"],
+output kubernetes2 = {for hostname in ["kube", "node1", "node2"]: hostname => hostDb2.vms[hostname]} with {
+  description: "Created Kubernetes VM details.",
 }
-
-output nfs = hostDb1.vms["nfs"]
-output nfs2 = hostDb2.vms["nfs2"]
-
+output nfs = hostDb1.vms["nfs"] with { description: "Created NFS VM details." }
+output nfs2 = hostDb2.vms["nfs2"] with { description: "Created NFS2 VM details." }
 output postgresql = {
   pg1: hostDb1.vms["pg1"],
   pg2: hostDb2.vms["pg2"],
-}
+} with { description: "Created PostgreSQL VM details." }
+
+moved from "libvirt_network.staging" to "module.host_db1.libvirt_network.main"
+moved from "libvirt_network.staging_db2" to "module.host_db2.libvirt_network.main"
+moved from "libvirt_pool.cloudinit" to "module.host_db1.libvirt_pool.cloudinit"
+moved from "libvirt_pool.cloudinit_db2" to "module.host_db2.libvirt_pool.cloudinit"
+moved from "module.db1" to "module.host_db1.module.vm[\"db1\"]"
+moved from "module.db2" to "module.host_db2.module.vm[\"db2\"]"
+moved from "module.kubernetes[\"kube\"]" to "module.host_db1.module.vm[\"kube\"]"
+moved from "module.kubernetes[\"node1\"]" to "module.host_db1.module.vm[\"node1\"]"
+moved from "module.kubernetes[\"node2\"]" to "module.host_db1.module.vm[\"node2\"]"
+moved from "module.kubernetes2[\"kube\"]" to "module.host_db2.module.vm[\"kube\"]"
+moved from "module.kubernetes2[\"node1\"]" to "module.host_db2.module.vm[\"node1\"]"
+moved from "module.kubernetes2[\"node2\"]" to "module.host_db2.module.vm[\"node2\"]"
+moved from "module.nfs" to "module.host_db1.module.vm[\"nfs\"]"
+moved from "module.nfs2" to "module.host_db2.module.vm[\"nfs2\"]"

@@ -100,6 +100,7 @@ func TestExamplesCompile(t *testing.T) {
 	t.Parallel()
 
 	paths := []string{
+		"../../examples/aws-s3/main.infra",
 		"../../examples/basic/main.infra",
 		"../../examples/lvm/main.infra",
 		"../../examples/provider-alias/main.infra",
@@ -295,6 +296,82 @@ func TestCompileRejectsReservedNames(t *testing.T) {
 	_, diagnostics := Compile(file)
 	if len(diagnostics) != 1 || !strings.Contains(diagnostics[0].Message, "reserved") {
 		t.Fatalf("Compile() diagnostics = %v", diagnostics)
+	}
+}
+
+func TestCompileModuleLanguageExtensions(t *testing.T) {
+	t.Parallel()
+
+	result := compileSource(t, `
+terraform { requiredVersion: ">= 1.5.0" }
+provider Null from "hashicorp/null" version "3.3.1"
+configure nullProvider = Null
+input machines: map<object {
+  address: string,
+  memory?: number = 1024,
+}> with {
+  description: "Machines",
+  validations: [{ condition: length(machines) > 0, errorMessage: "required" }],
+}
+
+module child "child" from "./child" { name: each.key } using { null: nullProvider } with {
+  forEach: machines,
+  dependsOn: [],
+}
+output selected = {for name, machine in child: name => machine.id if machine.ready} with { description: "Ready machines" }
+moved from "module.old" to "module.child"
+`)
+	var document map[string]any
+	if err := json.Unmarshal(result, &document); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if _, exists := document["provider"]; exists {
+		t.Fatal("inherited provider emitted a provider block")
+	}
+	variable := document["variable"].(map[string]any)["machines"].(map[string]any)
+	if variable["type"] != "map(object({address = string, memory = optional(number, 1024)}))" {
+		t.Errorf("variable type = %#v", variable["type"])
+	}
+	module := document["module"].(map[string]any)["child"].(map[string]any)
+	if module["for_each"] != "${var.machines}" || module["name"] != "${each.key}" {
+		t.Errorf("module = %#v", module)
+	}
+	output := document["output"].(map[string]any)["selected"].(map[string]any)
+	if output["value"] != "${{for name, machine in module.child : name => machine.id if machine.ready}}" {
+		t.Errorf("output value = %#v", output["value"])
+	}
+	if len(document["moved"].([]any)) != 1 {
+		t.Errorf("moved = %#v", document["moved"])
+	}
+}
+
+func TestCompileStaticTerraformTraversals(t *testing.T) {
+	t.Parallel()
+
+	result := compileSource(t, `
+provider Terraform from "terraform.io/builtin/terraform"
+configure terraform = Terraform
+resource first = terraform.data("first", {})
+resource second = terraform.data("second", {}, {
+  dependsOn: [first],
+  lifecycle: {
+    ignoreChanges: [address("input.marker")],
+  },
+})
+`)
+	var document map[string]any
+	if err := json.Unmarshal(result, &document); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	second := document["resource"].(map[string]any)["terraform_data"].(map[string]any)["second"].(map[string]any)
+	dependsOn := second["depends_on"].([]any)
+	if len(dependsOn) != 1 || dependsOn[0] != "terraform_data.first" {
+		t.Errorf("depends_on = %#v", dependsOn)
+	}
+	lifecycle := second["lifecycle"].(map[string]any)
+	ignoreChanges := lifecycle["ignore_changes"].([]any)
+	if len(ignoreChanges) != 1 || ignoreChanges[0] != "input.marker" {
+		t.Errorf("ignore_changes = %#v", ignoreChanges)
 	}
 }
 

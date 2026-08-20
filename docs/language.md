@@ -64,21 +64,86 @@ The source identifier (`hostDb1`) is used by InfraLang expressions. The quoted
 label (`host_db1`) is the Terraform module address, so existing state addresses
 can be preserved.
 
+Local InfraLang modules use the same directory boundary as Terraform modules.
+Building a module directory compiles every `.infra` file in that directory and
+recursively builds local module sources that also contain InfraLang files:
+
+```shell
+infralang check examples/staging
+infralang build examples/staging
+```
+
+Each compiled module directory receives a `main.tf.json` file. Remote and
+registry module sources remain Terraform's responsibility.
+
+Terraform module meta-arguments are separate from child inputs:
+
+```infra
+module vm "vm" from "../libvirt_vm" {
+  hostname: each.key,
+} using {
+  libvirt: libvirt,
+} with {
+  forEach: machines,
+  dependsOn: [network],
+}
+```
+
+`each.key` and `each.value` are available when `forEach` is present. Child
+modules can declare an inherited provider handle without emitting a provider
+configuration block:
+
+```infra
+provider Libvirt from "dmacvicar/libvirt" version "~> 0.9.3"
+configure libvirt = Libvirt
+```
+
 ## Types
 
 Inputs support `string`, `number`, `bool`, `dynamic`, `list<T>`, `set<T>`,
-`map<T>`, and `optional<T>`. InfraLang checks operations whose operand types are
-known before generating Terraform configuration. Provider resource attributes
-remain dynamic until provider-schema type generation is implemented.
+`map<T>`, `optional<T>`, and structural object types. InfraLang checks
+operations whose operand types are known before generating Terraform
+configuration. Provider resource attributes remain dynamic until
+provider-schema type generation is implemented.
+
+Object fields can be optional and can supply Terraform defaults:
+
+```infra
+input machines: map<object {
+  ip_address: string,
+  memory?: number = 1024,
+  cpu_mode?: string,
+}>
+```
 
 An `optional<T>` input without an explicit default is lowered to a nullable
 Terraform variable with `default = null` and the inner type constraint `T`.
+
+Descriptions, validation blocks, sensitivity, and nullability use declaration
+metadata:
+
+```infra
+input hostname: string with {
+  description: "VM hostname.",
+  validations: [{
+    condition: length(trimspace(hostname)) > 0,
+    errorMessage: "hostname must not be empty.",
+  }],
+}
+
+output hostname = vm.name with { description: "Created VM hostname." }
+```
 
 ## Expressions
 
 InfraLang supports literals, arrays, objects, function calls, member access,
 indexing, unary operators, arithmetic, comparisons, boolean operators, null
-coalescing (`??`), and conditional expressions.
+coalescing (`??`), conditional expressions, and list/object comprehensions.
+
+```infra
+let enabled = [for name, machine in machines: name if machine.enabled]
+let addresses = {for name, machine in machines: name => machine.ip_address}
+```
 
 An interpolated string uses `f"...{expression}..."`. A regular string is always
 literal. Terraform functions can be called directly, for example
@@ -124,10 +189,32 @@ For provider `libvirt`, method `domain` becomes Terraform resource type
 The optional third argument supports `count`, `forEach`, `dependsOn`,
 `lifecycle`, and other Terraform resource meta-arguments.
 
+Static lifecycle traversals use `address()` so they cannot be confused with
+ordinary strings:
+
+```infra
+resource vm = libvirt.domain("vm", arguments, {
+  lifecycle: {
+    ignoreChanges: [address("devices.consoles[0].source.pty.path")],
+  },
+})
+```
+
+## State moves
+
+State addresses remain explicit and stable across source-level renames:
+
+```infra
+moved from "module.old" to "module.host.module.vm[\"api\"]"
+```
+
+The source address is deliberately not resolved as an InfraLang symbol because
+it normally refers to infrastructure that no longer exists in the source.
+
 ## Current boundary
 
-The initial implementation intentionally does not replace Terraform's graph or
-state engine. User-defined functions, components, compile-time resource loops,
-provider-schema generated types, imports, and state-move declarations are the
-next language layers. Existing modules provide the composition boundary in the
-MVP.
+InfraLang intentionally does not replace Terraform's graph or state engine.
+User-defined functions, components, provider-schema generated types, imports,
+a formatter, and native Terraform test syntax remain future language layers.
+Directory modules and Terraform `for_each` provide the current composition and
+iteration boundaries.

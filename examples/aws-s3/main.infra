@@ -1,0 +1,56 @@
+terraform {
+  requiredVersion: ">= 1.5.0",
+}
+
+provider AWS from "hashicorp/aws" version "~> 6.0"
+
+input region: string = "eu-central-1"
+input project: string = "infralang-example"
+input environment: string = "development"
+
+configure aws = AWS({
+  region: region,
+})
+
+data account = aws.callerIdentity("current", {})
+
+# Including the AWS account ID keeps the bucket name globally unique while
+# still making it predictable within an account.
+let bucketName = f"{project}-{environment}-{account.account_id}"
+
+resource bucket = aws.s3Bucket("example", {
+  bucket: bucketName,
+  tags: {
+    "Name": bucketName,
+    "Environment": environment,
+    "ManagedBy": "InfraLang",
+  },
+})
+
+resource publicAccess = aws.s3BucketPublicAccessBlock("example", {
+  bucket: bucket.id,
+  blockPublicAcls: true,
+  blockPublicPolicy: true,
+  ignorePublicAcls: true,
+  restrictPublicBuckets: true,
+})
+
+resource versioning = aws.s3BucketVersioning("example", {
+  bucket: bucket.id,
+  versioningConfiguration: {
+    status: "Enabled",
+  },
+})
+
+resource encryption = aws.s3BucketServerSideEncryptionConfiguration("example", {
+  bucket: bucket.id,
+  rule: {
+    applyServerSideEncryptionByDefault: {
+      sseAlgorithm: "AES256",
+    },
+  },
+})
+
+output bucketName = bucket.bucket
+output bucketArn = bucket.arn
+output bucketRegion = region

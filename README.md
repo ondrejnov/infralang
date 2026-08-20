@@ -18,6 +18,11 @@ infrastructure.
 - Provider resources with stable Terraform labels
 - Provider data sources
 - Existing Terraform modules as first-class values
+- Recursive builds of local InfraLang modules
+- Structural object inputs with optional field defaults and validations
+- List and object comprehensions
+- Terraform module meta-arguments and inherited provider handles
+- State move declarations
 - Outputs and references between inputs, locals, resources, and modules
 - Basic static type and name checking
 - Terraform JSON generation with atomic output replacement
@@ -37,6 +42,8 @@ go build -o bin/infralang ./cmd/infralang
 ```shell
 bin/infralang check examples/basic/main.infra
 bin/infralang build examples/basic/main.infra
+bin/infralang check examples/staging
+bin/infralang build examples/staging
 terraform -chdir=examples/basic init -backend=false
 terraform -chdir=examples/basic validate
 ```
@@ -48,6 +55,9 @@ compatibility fixture; new infrastructure should prefer `terraform_data`.
 `examples/lvm` demonstrates safe logical-volume management with the local
 `github.com/ondrejnov/lvm` provider over SSH. It creates or grows an LV in an
 existing volume group and exposes its device path, UUID, and allocated size.
+
+`examples/aws-s3` creates a private, versioned, and encrypted AWS S3 bucket
+whose globally unique name includes the current AWS account ID.
 
 Generated `*.tf.json` files are ignored by Git because they are compiler
 artifacts.
@@ -83,14 +93,12 @@ keys are converted from camelCase to snake_case.
 
 ## Staging example
 
-`examples/staging/main.infra` is a direct InfraLang representation of the
-current `/var/www/infrabot/terraform-staging` root configuration. It keeps the
-existing provider aliases and Terraform module labels, including
-`module.host_db1` and `module.host_db2`.
-
-The staging example is checked as part of the test suite but is not initialized
-inside this repository because its local module source belongs to the sibling
-Infrabot project.
+`examples/staging` is a complete InfraLang representation of
+`/var/www/infrabot/terraform-staging`, including both local modules. It keeps
+the existing provider aliases, resource labels, module addresses, optional
+attribute defaults, validations, and moved-state declarations. A directory
+build recursively generates Terraform JSON for the root, `libvirt_host`, and
+`libvirt_vm` modules.
 
 ## Architecture
 
@@ -111,9 +119,8 @@ state locking, provider lifecycle, and apply semantics.
 ## Roadmap
 
 - User-defined pure functions and compile-time constants
-- Components and statically keyed resource loops
+- Reusable components above Terraform module boundaries
 - Provider-schema generated types and completion metadata
-- Imports and multi-file packages
-- State move declarations
+- Imports
 - Formatter and language server
 - Native test syntax lowered to Terraform tests

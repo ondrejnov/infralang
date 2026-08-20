@@ -41,13 +41,23 @@ type TypeExpression struct {
 	BaseNode
 	Name      string
 	Arguments []*TypeExpression
+	Fields    []TypeField
+}
+
+type TypeField struct {
+	BaseNode
+	Name     string
+	Type     *TypeExpression
+	Optional bool
+	Default  Expression
 }
 
 type InputDeclaration struct {
 	BaseNode
-	Name    string
-	Type    *TypeExpression
-	Default Expression
+	Name     string
+	Type     *TypeExpression
+	Default  Expression
+	Metadata *ObjectExpression
 }
 
 func (*InputDeclaration) declarationNode() {}
@@ -66,6 +76,7 @@ type ConfigureDeclaration struct {
 	ProviderName string
 	Alias        Expression
 	Config       *ObjectExpression
+	Inherited    bool
 }
 
 func (*ConfigureDeclaration) declarationNode() {}
@@ -95,22 +106,32 @@ func (*DataDeclaration) declarationNode() {}
 
 type ModuleDeclaration struct {
 	BaseNode
-	Name      string
-	Label     string
-	Source    string
-	Arguments *ObjectExpression
-	Providers *ObjectExpression
+	Name          string
+	Label         string
+	Source        string
+	Arguments     *ObjectExpression
+	Providers     *ObjectExpression
+	MetaArguments *ObjectExpression
 }
 
 func (*ModuleDeclaration) declarationNode() {}
 
 type OutputDeclaration struct {
 	BaseNode
-	Name  string
-	Value Expression
+	Name     string
+	Value    Expression
+	Metadata *ObjectExpression
 }
 
 func (*OutputDeclaration) declarationNode() {}
+
+type MovedDeclaration struct {
+	BaseNode
+	From string
+	To   string
+}
+
+func (*MovedDeclaration) declarationNode() {}
 
 type Expression interface {
 	Node
@@ -137,6 +158,19 @@ type ArrayExpression struct {
 }
 
 func (*ArrayExpression) expressionNode() {}
+
+type ForExpression struct {
+	BaseNode
+	KeyVariable   string
+	ValueVariable string
+	Collection    Expression
+	Key           Expression
+	Value         Expression
+	Condition     Expression
+	Object        bool
+}
+
+func (*ForExpression) expressionNode() {}
 
 type ObjectField struct {
 	BaseNode

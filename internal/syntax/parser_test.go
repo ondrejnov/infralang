@@ -94,3 +94,40 @@ func TestParseRejectsUnaryPlus(t *testing.T) {
 		t.Fatal("Parse() returned no diagnostics")
 	}
 }
+
+func TestParseModuleLanguageExtensions(t *testing.T) {
+	t.Parallel()
+
+	file, diagnostics := Parse("test.infra", `
+provider Null from "hashicorp/null"
+configure nullProvider = Null
+input machines: map<object {
+  address: string,
+  memory?: number = 1024,
+}> with {
+  description: "Machines",
+  validations: [{ condition: length(machines) > 0, errorMessage: "required" }],
+}
+module child "child" from "./child" { name: each.key } using { null: nullProvider } with { forEach: machines }
+output selected = {for name, machine in child: name => machine.id if machine.ready}
+moved from "module.old" to "module.child"
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("Parse() diagnostics = %v", diagnostics)
+	}
+	if len(file.Declarations) != 6 {
+		t.Fatalf("Parse() declarations = %d, want 6", len(file.Declarations))
+	}
+	input := file.Declarations[2].(*InputDeclaration)
+	object := input.Type.Arguments[0]
+	if len(object.Fields) != 2 || !object.Fields[1].Optional || object.Fields[1].Default == nil {
+		t.Fatalf("object type fields = %#v", object.Fields)
+	}
+	module := file.Declarations[3].(*ModuleDeclaration)
+	if module.MetaArguments == nil {
+		t.Fatal("module meta-arguments were not parsed")
+	}
+	if _, ok := file.Declarations[5].(*MovedDeclaration); !ok {
+		t.Fatalf("last declaration is %T, want *MovedDeclaration", file.Declarations[5])
+	}
+}

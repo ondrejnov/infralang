@@ -1,0 +1,308 @@
+terraform { requiredVersion: ">= 1.5.0" }
+
+provider Libvirt from "dmacvicar/libvirt" version "~> 0.9.3"
+provider Lvm from "github.com/ondrejnov/lvm" version "0.5.0"
+provider Terraform from "terraform.io/builtin/terraform"
+
+configure libvirt = Libvirt
+configure lvm = Lvm
+configure terraform = Terraform
+
+input adopt_existing: bool = false with {
+  description: "Adopt an existing VM without copying the base image or replacing its cloud-init ISO.",
+}
+
+input common_config: object {
+  base_image_path: string,
+  bootstrap_root: string,
+  bridge: string,
+  cloudinit_directory: string,
+  cloudinit_pool: string,
+  gateway: string,
+  interface_name: string,
+  mtu: number,
+  prefix_length: number,
+  remote_host: string,
+  remote_certificate_path?: string = "~/.ssh/id_rsa-cert.pub",
+  remote_private_key_path?: string = "~/.ssh/id_rsa",
+  remote_user?: string = "root",
+  ssh_authorized_keys: list<string>,
+  volume_group: string,
+} with {
+  description: "Configuration shared by VM module instances.",
+  validations: [
+    { condition: startswith(common_config.base_image_path, "/"), errorMessage: "common_config.base_image_path must be an absolute path." },
+    { condition: startswith(common_config.bootstrap_root, "/"), errorMessage: "common_config.bootstrap_root must be an absolute path." },
+    { condition: startswith(common_config.cloudinit_directory, "/"), errorMessage: "common_config.cloudinit_directory must be an absolute path." },
+    { condition: length(trimspace(common_config.cloudinit_pool)) > 0, errorMessage: "common_config.cloudinit_pool must not be empty." },
+    { condition: can(cidrhost(f"{common_config.gateway}/32", 0)), errorMessage: "common_config.gateway must be a valid IPv4 address." },
+    { condition: common_config.mtu >= 68 && common_config.mtu <= 65535, errorMessage: "common_config.mtu must be between 68 and 65535." },
+    { condition: common_config.prefix_length >= 0 && common_config.prefix_length <= 32, errorMessage: "common_config.prefix_length must be between 0 and 32." },
+    { condition: length(trimspace(common_config.remote_host)) > 0, errorMessage: "common_config.remote_host must not be empty." },
+    { condition: length(trimspace(common_config.remote_certificate_path)) > 0, errorMessage: "common_config.remote_certificate_path must not be empty." },
+    { condition: length(trimspace(common_config.remote_private_key_path)) > 0, errorMessage: "common_config.remote_private_key_path must not be empty." },
+    { condition: length(common_config.ssh_authorized_keys) > 0, errorMessage: "common_config.ssh_authorized_keys must contain at least one public SSH key." },
+  ],
+}
+
+input cpu_mode: optional<string> with {
+  description: "Optional libvirt CPU mode exposed to the guest. Use host-passthrough when nested virtualization is required.",
+  nullable: true,
+  validations: [{
+    condition: cpu_mode == null || contains(["host-model", "host-passthrough"], cpu_mode),
+    errorMessage: "cpu_mode must be null, host-model, or host-passthrough.",
+  }],
+}
+
+input data_disk_size_gib: optional<number> with {
+  description: "Optional data disk capacity in GiB. When null, no data disk is created.",
+  nullable: true,
+  validations: [{
+    condition: data_disk_size_gib == null || (data_disk_size_gib >= 1 && floor(data_disk_size_gib) == data_disk_size_gib),
+    errorMessage: "data_disk_size_gib must be null or a positive whole number.",
+  }],
+}
+
+input disk_size_gib: number = 10 with {
+  description: "Root disk capacity in GiB.",
+  validations: [{
+    condition: disk_size_gib >= 1 && floor(disk_size_gib) == disk_size_gib,
+    errorMessage: "disk_size_gib must be a positive whole number.",
+  }],
+}
+
+input hostname: string with {
+  description: "VM and guest hostname.",
+  validations: [{ condition: length(trimspace(hostname)) > 0, errorMessage: "hostname must not be empty." }],
+}
+
+input ip_address: string with {
+  description: "Static guest IPv4 address without a prefix.",
+  validations: [{ condition: can(cidrhost(f"{ip_address}/32", 0)), errorMessage: "ip_address must be a valid IPv4 address." }],
+}
+
+input qemu_guest_agent_enabled: bool = false with {
+  description: "Install qemu-guest-agent and attach its private virtio channel.",
+}
+
+input ram_mb: number = 1024 with {
+  description: "Guest memory in MiB.",
+  validations: [{ condition: ram_mb >= 256, errorMessage: "ram_mb must be at least 256." }],
+}
+
+input root_password: optional<string> with {
+  description: "Optional root password. SSH password authentication stays disabled when null.",
+  nullable: true,
+  sensitive: true,
+}
+
+input serial_console_enabled: bool = false with {
+  description: "Reconcile an externally attached PTY serial console for virsh console access.",
+}
+
+input setup_files: list<object {
+  source: string,
+  destination: string,
+  permissions?: string = "0644",
+}> = [] with {
+  description: "Additional local files written into the guest by cloud-init.",
+  validations: [{
+    condition: alltrue([for item in setup_files: startswith(item.source, "/") && startswith(item.destination, "/")]),
+    errorMessage: "Each setup file source and destination must start with '/'.",
+  }],
+}
+
+input vcpu: number = 2 with {
+  description: "Number of virtual CPUs.",
+  validations: [{ condition: vcpu >= 1, errorMessage: "vcpu must be at least 1." }],
+}
+
+input running: bool = true with { description: "Running" }
+
+let cloudinitIsoPath = f"{trimsuffix(common_config.cloudinit_directory, \"/\")}/{hostname}-cloud-init.iso"
+
+let bootstrapFiles = [for item in setup_files: {
+  path: item.destination,
+  content: filebase64(f"{common_config.bootstrap_root}{item.source}"),
+  encoding: "b64",
+  permissions: item.permissions,
+}]
+
+let cloudConfig = merge({
+  disable_root: false,
+  hostname: hostname,
+  manage_resolv_conf: false,
+  packages: concat(["python3"], qemu_guest_agent_enabled ? ["qemu-guest-agent"] : []),
+  ssh_deletekeys: true,
+  ssh_pwauth: root_password != null,
+  users: [{
+    lock_passwd: root_password == null,
+    name: "root",
+    ssh_authorized_keys: common_config.ssh_authorized_keys,
+  }],
+  write_files: concat([
+    {
+      path: "/etc/cloud/cloud.cfg.d/99-disable-network-config.cfg",
+      content: "network: {config: disabled}\n",
+      permissions: "0644",
+    },
+    {
+      path: "/etc/ssh/sshd_config.d/99-root-login.conf",
+      content: "PermitRootLogin yes\n",
+      permissions: "0644",
+    },
+  ], bootstrapFiles),
+  runcmd: ["systemctl restart ssh || systemctl restart sshd"],
+}, jsondecode(root_password == null ? "{}" : jsonencode({
+  password: root_password,
+  chpasswd: { expire: false },
+})))
+
+resource rootVolume = lvm.logicalVolume("root", {
+  name: hostname,
+  size: disk_size_gib,
+  volumeGroup: common_config.volume_group,
+})
+
+resource dataVolume = lvm.logicalVolume("data", {
+  name: f"{hostname}-data",
+  size: data_disk_size_gib,
+  volumeGroup: common_config.volume_group,
+}, {
+  count: data_disk_size_gib == null ? 0 : 1,
+})
+
+resource dataDiskResize = terraform.data("data_disk_resize", {
+  triggersReplace: [dataVolume[0].actual_size_bytes],
+  connection: {
+    type: "ssh",
+    certificate: file(pathexpand(common_config.remote_certificate_path)),
+    host: common_config.remote_host,
+    privateKey: file(pathexpand(common_config.remote_private_key_path)),
+    user: common_config.remote_user,
+  },
+  provisioner: [{
+    "remote-exec": {
+      inline: [f"virsh blockresize {jsonencode(hostname)} vdb {jsonencode(f\"{data_disk_size_gib}G\")}"],
+    },
+  }],
+}, {
+  count: data_disk_size_gib == null ? 0 : 1,
+  dependsOn: [vm],
+})
+
+resource rootImage = terraform.data("root_image", {
+  triggersReplace: [rootVolume.uuid],
+  connection: {
+    type: "ssh",
+    certificate: file(pathexpand(common_config.remote_certificate_path)),
+    host: common_config.remote_host,
+    privateKey: file(pathexpand(common_config.remote_private_key_path)),
+    user: common_config.remote_user,
+  },
+  provisioner: [{
+    "remote-exec": {
+      inline: [f"dd if={jsonencode(common_config.base_image_path)} of={jsonencode(rootVolume.path)} bs=4M conv=fsync"],
+    },
+  }],
+}, {
+  count: adopt_existing ? 0 : 1,
+})
+
+resource seedDisk = libvirt.cloudinitDisk("seed", {
+  name: f"{hostname}-cloud-init",
+  userData: f"#cloud-config\n{yamlencode(cloudConfig)}",
+  metaData: yamlencode({
+    "instance-id": hostname,
+    "local-hostname": hostname,
+  }),
+  networkConfig: yamlencode({
+    version: 1,
+    config: [
+      {
+        type: "physical",
+        name: common_config.interface_name,
+        mtu: common_config.mtu,
+        subnets: [{
+          type: "static",
+          address: f"{ip_address}/{common_config.prefix_length}",
+          gateway: common_config.gateway,
+        }],
+      },
+      { type: "nameserver", address: [common_config.gateway] },
+    ],
+  }),
+}, {
+  count: adopt_existing ? 0 : 1,
+})
+
+resource seedVolume = libvirt.volume("seed", {
+  name: f"{hostname}-cloud-init.iso",
+  pool: common_config.cloudinit_pool,
+  target: { format: { type: "iso" } },
+  create: { content: { url: seedDisk[0].path } },
+}, {
+  count: adopt_existing ? 0 : 1,
+})
+
+resource vm = libvirt.domain("vm", {
+  name: hostname,
+  type: "kvm",
+  memory: ram_mb,
+  memoryUnit: "MiB",
+  vcpu: vcpu,
+  autostart: true,
+  running: running,
+  cpu: cpu_mode == null ? null : { mode: cpu_mode },
+  os: { type: "hvm", typeArch: "x86_64", typeMachine: "q35" },
+  features: { acpi: true },
+  devices: {
+    channels: qemu_guest_agent_enabled ? [{
+      source: { unix: { mode: "bind" } },
+      target: { virtIo: { name: "org.qemu.guest_agent.0" } },
+    }] : [],
+    consoles: serial_console_enabled ? [{
+      source: { pty: { path: "" } },
+      target: { port: 0, type: "serial" },
+    }] : [],
+    disks: concat(
+      [{
+        device: "disk",
+        driver: { name: "qemu", type: "raw" },
+        source: { block: { dev: rootVolume.path } },
+        target: { dev: "vda", bus: "virtio" },
+      }],
+      [for volume in dataVolume: {
+        device: "disk",
+        driver: { name: "qemu", type: "raw" },
+        source: { block: { dev: volume.path } },
+        target: { dev: "vdb", bus: "virtio" },
+      }],
+      [{
+        device: "cdrom",
+        readOnly: true,
+        source: { file: { file: adopt_existing ? cloudinitIsoPath : seedVolume[0].path } },
+        target: { dev: "sda", bus: "sata" },
+      }],
+    ),
+    interfaces: [{
+      model: { type: "virtio" },
+      source: { bridge: { bridge: common_config.bridge } },
+    }],
+  },
+}, {
+  dependsOn: [rootImage],
+  lifecycle: {
+    ignoreChanges: [address("devices.consoles[0].source.pty.path")],
+  },
+})
+
+output hostname = vm.name with { description: "Created libvirt domain name." }
+output ip_address = ip_address with { description: "Configured static guest IP address." }
+output disk_path = rootVolume.path with { description: "Host path of the LVM-managed root volume." }
+output data_disk_path = one([for volume in dataVolume: volume.path]) with {
+  description: "Host path of the optional LVM-managed data volume.",
+}
+output serial_console_enabled = serial_console_enabled with {
+  description: "Whether a PTY serial console is configured for the domain.",
+}

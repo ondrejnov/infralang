@@ -74,6 +74,8 @@ func (p *parser) parseDeclaration() Declaration {
 		return p.parseModuleDeclaration()
 	case p.checkIdentifier("output"):
 		return p.parseOutputDeclaration()
+	case p.checkIdentifier("moved"):
+		return p.parseMovedDeclaration()
 	default:
 		token := p.peek()
 		p.report(token, fmt.Sprintf("expected a declaration, found %q", token.Lexeme))
@@ -132,11 +134,20 @@ func (p *parser) parseInputDeclaration() Declaration {
 		}
 		end = defaultValue.GetSpan().End
 	}
+	var metadata *ObjectExpression
+	if p.matchIdentifier("with") {
+		metadata = p.parseObjectExpression()
+		if metadata == nil {
+			return nil
+		}
+		end = metadata.GetSpan().End
+	}
 	return &InputDeclaration{
 		BaseNode: BaseNode{Span: Span{Start: start, End: end}},
 		Name:     name.Lexeme,
 		Type:     typeExpression,
 		Default:  defaultValue,
+		Metadata: metadata,
 	}
 }
 
@@ -148,6 +159,36 @@ func (p *parser) parseTypeExpression() *TypeExpression {
 	typeExpression := &TypeExpression{
 		BaseNode: BaseNode{Span: name.Span},
 		Name:     name.Lexeme,
+	}
+	if name.Lexeme == "object" && p.check(TokenLeftBrace) {
+		start := p.advance()
+		for !p.check(TokenRightBrace) && !p.atEnd() {
+			fieldName := p.expect(TokenIdentifier, "expected object type field name")
+			optional := p.match(TokenQuestion)
+			p.expect(TokenColon, "expected ':' after object type field name")
+			fieldType := p.parseTypeExpression()
+			if fieldType == nil {
+				break
+			}
+			var defaultValue Expression
+			fieldEnd := fieldType.GetSpan().End
+			if p.match(TokenAssign) {
+				defaultValue = p.parseExpression()
+				if defaultValue == nil {
+					break
+				}
+				fieldEnd = defaultValue.GetSpan().End
+			}
+			typeExpression.Fields = append(typeExpression.Fields, TypeField{
+				BaseNode: BaseNode{Span: Span{Start: fieldName.Span.Start, End: fieldEnd}},
+				Name:     fieldName.Lexeme, Type: fieldType, Optional: optional, Default: defaultValue,
+			})
+			p.match(TokenComma, TokenSemicolon)
+		}
+		end := p.expect(TokenRightBrace, "expected '}' after object type")
+		typeExpression.Span = Span{Start: name.Span.Start, End: end.Span.End}
+		_ = start
+		return typeExpression
 	}
 	if !p.match(TokenLess) {
 		return typeExpression
@@ -187,6 +228,12 @@ func (p *parser) parseConfigureDeclaration() Declaration {
 	name := p.expect(TokenIdentifier, "expected provider configuration name")
 	p.expect(TokenAssign, "expected '=' after provider configuration name")
 	providerName := p.expect(TokenIdentifier, "expected provider name")
+	if !p.check(TokenLeftParen) {
+		return &ConfigureDeclaration{
+			BaseNode: BaseNode{Span: Span{Start: start, End: providerName.Span.End}},
+			Name:     name.Lexeme, ProviderName: providerName.Lexeme, Inherited: true,
+		}
+	}
 	p.expect(TokenLeftParen, "expected '(' after provider name")
 	arguments := p.parseCallArguments()
 	end := p.expect(TokenRightParen, "expected ')' after provider configuration")
@@ -333,13 +380,22 @@ func (p *parser) parseModuleDeclaration() Declaration {
 		return nil
 	}
 	var providers *ObjectExpression
+	var meta *ObjectExpression
 	end := arguments.GetSpan().End
-	if p.matchIdentifier("using") {
-		providers = p.parseObjectExpression()
-		if providers == nil {
-			return nil
+	for p.checkIdentifier("using") || p.checkIdentifier("with") {
+		if p.matchIdentifier("using") {
+			providers = p.parseObjectExpression()
+			if providers == nil {
+				return nil
+			}
+			end = providers.GetSpan().End
+		} else if p.matchIdentifier("with") {
+			meta = p.parseObjectExpression()
+			if meta == nil {
+				return nil
+			}
+			end = meta.GetSpan().End
 		}
-		end = providers.GetSpan().End
 	}
 	if label.Lexeme == "" {
 		p.report(label, "module label must not be empty")
@@ -349,12 +405,13 @@ func (p *parser) parseModuleDeclaration() Declaration {
 		return nil
 	}
 	return &ModuleDeclaration{
-		BaseNode:  BaseNode{Span: Span{Start: start, End: end}},
-		Name:      name.Lexeme,
-		Label:     label.Lexeme,
-		Source:    source.Lexeme,
-		Arguments: arguments,
-		Providers: providers,
+		BaseNode:      BaseNode{Span: Span{Start: start, End: end}},
+		Name:          name.Lexeme,
+		Label:         label.Lexeme,
+		Source:        source.Lexeme,
+		Arguments:     arguments,
+		Providers:     providers,
+		MetaArguments: meta,
 	}
 }
 
@@ -366,11 +423,37 @@ func (p *parser) parseOutputDeclaration() Declaration {
 	if value == nil {
 		return nil
 	}
+	end := value.GetSpan().End
+	var metadata *ObjectExpression
+	if p.matchIdentifier("with") {
+		metadata = p.parseObjectExpression()
+		if metadata == nil {
+			return nil
+		}
+		end = metadata.GetSpan().End
+	}
 	return &OutputDeclaration{
-		BaseNode: BaseNode{Span: Span{Start: start, End: value.GetSpan().End}},
+		BaseNode: BaseNode{Span: Span{Start: start, End: end}},
 		Name:     name.Lexeme,
 		Value:    value,
+		Metadata: metadata,
 	}
+}
+
+func (p *parser) parseMovedDeclaration() Declaration {
+	start := p.advance().Span.Start
+	if !p.expectIdentifier("from") {
+		return nil
+	}
+	from := p.expect(TokenString, "expected literal source address")
+	if !p.expectIdentifier("to") {
+		return nil
+	}
+	to := p.expect(TokenString, "expected literal destination address")
+	if from.Lexeme == "" || to.Lexeme == "" {
+		p.report(from, "moved addresses must not be empty")
+	}
+	return &MovedDeclaration{BaseNode: BaseNode{Span: Span{Start: start, End: to.Span.End}}, From: from.Lexeme, To: to.Lexeme}
 }
 
 func (p *parser) parseExpression() Expression {
@@ -524,8 +607,14 @@ func (p *parser) parsePrimaryExpression() Expression {
 		}
 		return expression
 	case TokenLeftBracket:
+		if p.current+1 < len(p.tokens) && p.tokens[p.current+1].IsIdentifier("for") {
+			return p.parseForExpression(false)
+		}
 		return p.parseArrayExpression()
 	case TokenLeftBrace:
+		if p.current+1 < len(p.tokens) && p.tokens[p.current+1].IsIdentifier("for") {
+			return p.parseForExpression(true)
+		}
 		return p.parseObjectExpression()
 	default:
 		p.report(token, fmt.Sprintf("expected expression, found %s", token.Kind))
@@ -533,6 +622,42 @@ func (p *parser) parsePrimaryExpression() Expression {
 			p.advance()
 		}
 		return nil
+	}
+}
+
+func (p *parser) parseForExpression(object bool) Expression {
+	open := TokenLeftBracket
+	close := TokenRightBracket
+	if object {
+		open, close = TokenLeftBrace, TokenRightBrace
+	}
+	start := p.expect(open, "expected comprehension opening delimiter").Span.Start
+	p.expectIdentifier("for")
+	first := p.expect(TokenIdentifier, "expected iterator name")
+	keyVariable := ""
+	valueVariable := first.Lexeme
+	if p.match(TokenComma) {
+		keyVariable = first.Lexeme
+		valueVariable = p.expect(TokenIdentifier, "expected value iterator name").Lexeme
+	}
+	p.expectIdentifier("in")
+	collection := p.parseExpression()
+	p.expect(TokenColon, "expected ':' after comprehension collection")
+	var key Expression
+	value := p.parseExpression()
+	if object {
+		key = value
+		p.expect(TokenArrow, "expected '=>' in object comprehension")
+		value = p.parseExpression()
+	}
+	var condition Expression
+	if p.matchIdentifier("if") {
+		condition = p.parseExpression()
+	}
+	end := p.expect(close, "expected comprehension closing delimiter")
+	return &ForExpression{
+		BaseNode: BaseNode{Span: Span{Start: start, End: end.Span.End}}, KeyVariable: keyVariable,
+		ValueVariable: valueVariable, Collection: collection, Key: key, Value: value, Condition: condition, Object: object,
 	}
 }
 
@@ -721,7 +846,7 @@ func (p *parser) synchronize() {
 		}
 		if p.peek().Kind == TokenIdentifier {
 			switch p.peek().Lexeme {
-			case "terraform", "provider", "input", "let", "configure", "resource", "data", "module", "output":
+			case "terraform", "provider", "input", "let", "configure", "resource", "data", "module", "output", "moved":
 				return
 			}
 		}
