@@ -481,6 +481,8 @@ func importableDeclarationName(declaration syntax.Declaration) string {
 		return value.Name
 	case *syntax.ModuleDeclaration:
 		return value.Name
+	case *syntax.ModuleImportDeclaration:
+		return value.Name
 	case *syntax.OutputDeclaration:
 		return value.Name
 	case *syntax.ComponentDefinition:

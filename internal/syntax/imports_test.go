@@ -8,11 +8,12 @@ func TestParseTypeExportsAndImports(t *testing.T) {
 	file, diagnostics := Parse("types.infra", `
 export type HostConfig = object { hostName: string }
 import type { HostConfig, HostConfig as Config, } from "./shared.infra"
+import module Host from "./host"
 `)
 	if len(diagnostics) != 0 {
 		t.Fatalf("Parse() diagnostics = %v", diagnostics)
 	}
-	if len(file.Declarations) != 2 {
+	if len(file.Declarations) != 3 {
 		t.Fatalf("declarations = %#v", file.Declarations)
 	}
 	exported := file.Declarations[0].(*TypeAliasDeclaration)
@@ -26,6 +27,10 @@ import type { HostConfig, HostConfig as Config, } from "./shared.infra"
 	if imported.Items[0].ImportedName != "HostConfig" || imported.Items[0].LocalName != "HostConfig" || imported.Items[1].LocalName != "Config" {
 		t.Fatalf("type import items = %#v", imported.Items)
 	}
+	module := file.Declarations[2].(*ModuleImportDeclaration)
+	if module.Name != "Host" || module.Source != "./host" {
+		t.Fatalf("module import = %#v", module)
+	}
 }
 
 func TestParseRejectsMalformedTypeImports(t *testing.T) {
@@ -38,6 +43,8 @@ func TestParseRejectsMalformedTypeImports(t *testing.T) {
 		"duplicate local": `import type { First as Shared, Second as Shared } from "./types.infra"`,
 		"empty import":    `import type {} from "./types.infra"`,
 		"missing path":    `import type { First } from First`,
+		"missing kind":    `import First from "./first"`,
+		"missing module":  `import module from "./first"`,
 	}
 	for name, source := range tests {
 		t.Run(name, func(t *testing.T) {

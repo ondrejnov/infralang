@@ -30,6 +30,7 @@ type preparer struct {
 	diagnostics   []syntax.Diagnostic
 	constants     map[string]*constBinding
 	typeAliases   map[string]*syntax.TypeAliasDeclaration
+	moduleImports map[string]*syntax.ModuleImportDeclaration
 	constantStack []string
 	cycleReported map[string]bool
 	indexed       map[string]map[string]indexedHandle
@@ -39,9 +40,11 @@ func Prepare(file *syntax.File) (*syntax.File, []syntax.Diagnostic) {
 	p := &preparer{
 		file: file, constants: make(map[string]*constBinding),
 		typeAliases:   make(map[string]*syntax.TypeAliasDeclaration),
+		moduleImports: make(map[string]*syntax.ModuleImportDeclaration),
 		cycleReported: make(map[string]bool), indexed: make(map[string]map[string]indexedHandle),
 	}
 	p.collectCompileTimeDeclarations()
+	p.bindModuleImports(file.Declarations, true)
 	for _, declaration := range file.Declarations {
 		if constant, ok := declaration.(*syntax.ConstDeclaration); ok {
 			p.evalConstant(constant.Name)
@@ -92,6 +95,36 @@ func (p *preparer) collectCompileTimeDeclarations() {
 			if p.typeAliases[value.Name] == nil {
 				p.typeAliases[value.Name] = value
 			}
+		case *syntax.ModuleImportDeclaration:
+			if previous := p.moduleImports[value.Name]; previous != nil {
+				message := fmt.Sprintf("module import %q conflicts with another import", value.Name)
+				p.addDiagnostic(previous, message)
+				p.addDiagnostic(value, message)
+				continue
+			}
+			p.moduleImports[value.Name] = value
+		}
+	}
+}
+
+func (p *preparer) bindModuleImports(declarations []syntax.Declaration, topLevel bool) {
+	for _, declaration := range declarations {
+		switch value := declaration.(type) {
+		case *syntax.ModuleImportDeclaration:
+			if !topLevel {
+				p.addDiagnostic(value, "module imports are directory-scoped and must be top-level")
+			}
+		case *syntax.ModuleDeclaration:
+			imported := p.moduleImports[value.ModuleName]
+			if imported == nil {
+				p.addDiagnostic(value, fmt.Sprintf("unknown imported module %q", value.ModuleName))
+				continue
+			}
+			value.Source = imported.Source
+		case *syntax.StaticForDeclaration:
+			p.bindModuleImports(value.Declarations, false)
+		case *syntax.ComponentDefinition:
+			p.bindModuleImports(value.Declarations, false)
 		}
 	}
 }

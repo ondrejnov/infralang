@@ -64,6 +64,7 @@ let name = f"application-{region}"
 
 configure aws = AWS({ region })
 configure awsEast = AWS("east", { region: "us-east-1" })
+import module Child from "./modules/child"
 
 data zones = aws.availabilityZones("available", {
   state: "available",
@@ -77,9 +78,9 @@ resource bucket = aws.s3Bucket("application", {
   lifecycle: { preventDestroy: true },
 })
 
-module child "child" from "./modules/child" {
+module child = Child("child", {
   region,
-} using {
+}) using {
   aws: awsEast,
 } with {
   dependsOn: [bucket],
@@ -101,7 +102,8 @@ Declaration rules:
 - `configure name = Provider` declares an inherited provider slot in a child module and emits no provider block.
 - Resources and data sources use configured provider handles, not provider declaration names.
 - A resource accepts an optional third object for Terraform meta-arguments. A data source does not.
-- A module has an InfraLang handle and a separate Terraform label: `module sourceName labelExpression from source arguments`.
+- `import module Name from "source"` creates a directory-scoped module constructor and emits nothing by itself.
+- A module instance has an InfraLang handle and a separate Terraform label: `module sourceName = Name(labelExpression, arguments)`.
 - Module `using` maps child provider slot names to parent configuration handles. Array shorthand such as `using [aws]` infers each child slot from the configuration's provider local name; it equals `using { aws: aws }` only when that inferred name and the handle are both `aws`.
 - Module `with` holds Terraform meta-arguments such as `forEach` and `dependsOn`.
 - Declarations are order-independent and may be separated by whitespace or semicolons.
@@ -294,10 +296,12 @@ Remote registry modules, remote URLs, and local Terraform-only directories are u
 Use `...inputs(value)` only inside a module argument object to forward a statically known structural object:
 
 ```infra
-module child "child" from "./child" {
+import module Child from "./child"
+
+module child = Child("child", {
   ...inputs(config),
   hostname: overrideName,
-} using [libvirt, lvm]
+}) using { libvirt, lvm }
 ```
 
 The current compiler matches forwarded object wire keys to child input wire names. Use explicit source/wire aliases when parent field spelling and a legacy child input name would otherwise lower differently. Later explicit arguments override earlier forwarded fields. Unknown, missing, duplicate, and incompatible fields are diagnosed. This is not a general object spread.
@@ -322,12 +326,14 @@ Function calls and runtime declarations are unavailable during constant evaluati
 
 ### Static Loops And Indexed Handles
 
-The following fragment assumes the provider and child module declarations used by the surrounding project:
+The following fragment assumes the provider declaration used by the surrounding project:
 
 ```infra
+import module Child from "./child"
+
 static for key, environment in environments {
   configure providers[key] = Null({})
-  module children[key] environment.label from "./child" {} using {
+  module children[key] = Child(environment.label, {}) using {
     "null": providers[key],
   }
 }
@@ -355,16 +361,18 @@ Type imports require project/directory compilation; standalone compilation canno
 
 ### Components
 
-A component is a typed, directory-scoped declaration template. This fragment assumes the referenced types, providers, and child module exist in the surrounding directory project:
+A component is a typed, directory-scoped declaration template. This fragment assumes the referenced types and providers exist in the surrounding directory project:
 
 ```infra
+import module LibvirtHost from "./modules/libvirt_host"
+
 component HostDeployment(label: string, config: HostConfig) using {
   libvirt: Libvirt,
   lvm: Lvm,
 } {
-  module host label from "./modules/libvirt_host" {
+  module host = LibvirtHost(label, {
     ...inputs(config),
-  } using [libvirt, lvm]
+  }) using { libvirt, lvm }
 
   export vms = host.vms
 }
@@ -392,11 +400,11 @@ Expansion is hygienic for source handles and bindings, but explicit Terraform la
 | `let name` | `local.name` |
 | `resource item = aws.s3Bucket("label", ...)` | `aws_s3_bucket.label` |
 | `data item = aws.availabilityZones("label", ...)` | `data.aws_availability_zones.label` |
-| `module child "stable" ...` | `module.stable` |
+| `module child = Child("stable", ...)` | `module.stable` |
 
 Constant values that reach ordinary declarations become native JSON. Runtime expressions become Terraform JSON interpolation expressions. Do not manually write Terraform interpolation syntax in ordinary InfraLang strings.
 
-Terraform resource and module state addresses come from resource/data type plus label, module label, and runtime `count`/`for_each` keys. Provider configurations have separate identity from provider source plus alias and are recorded in state, but the source is not textually part of a resource address. Source handles, constants, iterator names, component names, parameters, and component instance handles do not create Terraform identity.
+Terraform resource and module state addresses come from resource/data type plus label, module label, and runtime `count`/`for_each` keys. Provider configurations have separate identity from provider source plus alias and are recorded in state, but the source is not textually part of a resource address. Module import names, source handles, constants, iterator names, component names, parameters, and component instance handles do not create Terraform identity.
 
 Changing an explicit label, provider alias, static key used as a label/alias, or runtime cardinality can change state addresses. Changing a provider source rebinds provider configuration identity without textually renaming resource addresses. Changing a module source does not rename the `module.<label>` call itself, but can replace the infrastructure and nested addresses behind that call. InfraLang does not infer migrations from source renames. Review generated addresses and add explicit `moved` declarations when state should follow an intentional change.
 

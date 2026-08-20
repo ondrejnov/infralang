@@ -10,10 +10,14 @@ import (
 func TestCompileDiscoversCanonicalGraphAndOrdersArtifacts(t *testing.T) {
 	root := t.TempDir()
 	writeProjectFile(t, root, "main.infra", `
-module remote "remote" from "registry.example/remote" {}
-module terraformOnly "terraform_only" from "./terraform-only" {}
-module zed "zed" from "./z-child" { name: "zed" }
-module alpha "alpha" from "./a-child" { name: "alpha" }
+import module Remote from "registry.example/remote"
+import module TerraformOnly from "./terraform-only"
+import module Zed from "./z-child"
+import module Alpha from "./a-child"
+module remote = Remote("remote", {})
+module terraformOnly = TerraformOnly("terraform_only", {})
+module zed = Zed("zed", { name: "zed" })
+module alpha = Alpha("alpha", { name: "alpha" })
 `)
 	writeProjectFile(t, root, "a-child/main.infra", `input name: string
 output value = name`)
@@ -44,8 +48,8 @@ output value = name`)
 
 func TestCompileRejectsCompleteLocalModuleCycle(t *testing.T) {
 	root := t.TempDir()
-	writeProjectFile(t, root, "main.infra", `module child "child" from "./child" {}`)
-	writeProjectFile(t, root, "child/main.infra", `module root "root" from ".." {}`)
+	writeProjectFile(t, root, "main.infra", "import module Child from \"./child\"\nmodule child = Child(\"child\", {})")
+	writeProjectFile(t, root, "child/main.infra", "import module Root from \"..\"\nmodule root = Root(\"root\", {})")
 
 	result, err := Compile(root)
 	if err != nil {
@@ -62,8 +66,10 @@ func TestCompileRejectsCompleteLocalModuleCycle(t *testing.T) {
 func TestCompileCanonicalSymlinkIdentityProducesOneChild(t *testing.T) {
 	root := t.TempDir()
 	writeProjectFile(t, root, "main.infra", `
-module direct "direct" from "./child" {}
-module linked "linked" from "./child-link" {}
+import module Direct from "./child"
+import module Linked from "./child-link"
+module direct = Direct("direct", {})
+module linked = Linked("linked", {})
 `)
 	writeProjectFile(t, root, "child/main.infra", `output value = "child"`)
 	if err := os.Symlink(filepath.Join(root, "child"), filepath.Join(root, "child-link")); err != nil {
@@ -85,7 +91,7 @@ module linked "linked" from "./child-link" {}
 func TestCompileRejectsCanonicalLocalModuleEscape(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
-	writeProjectFile(t, root, "main.infra", `module escaped "escaped" from "./escaped" {}`)
+	writeProjectFile(t, root, "main.infra", "import module Escaped from \"./escaped\"\nmodule escaped = Escaped(\"escaped\", {})")
 	writeProjectFile(t, outside, "main.infra", `output value = "outside"`)
 	if err := os.Symlink(outside, filepath.Join(root, "escaped")); err != nil {
 		t.Fatal(err)
@@ -106,8 +112,9 @@ func TestCompileRejectsCanonicalLocalModuleEscape(t *testing.T) {
 func TestCompileChecksLocalCallsAfterInterfaceCollection(t *testing.T) {
 	root := t.TempDir()
 	writeProjectFile(t, root, "main.infra", `
+import module Child from "./child"
 input forwarded: object { imageId "image_id": string } = { imageId: "ami" }
-module child "child" from "./child" { ...inputs(forwarded) }
+module child = Child("child", { ...inputs(forwarded) })
 output image = child.image
 `)
 	writeProjectFile(t, root, "child/outputs.infra", `output image = imageId`)
@@ -127,7 +134,7 @@ output image = child.image
 
 func TestCompileLocalCallReportsIndependentErrorsWithoutArtifacts(t *testing.T) {
 	root := t.TempDir()
-	writeProjectFile(t, root, "main.infra", `module child "child" from "./child" { unknown: true }`)
+	writeProjectFile(t, root, "main.infra", "import module Child from \"./child\"\nmodule child = Child(\"child\", { unknown: true })")
 	writeProjectFile(t, root, "child/main.infra", `input required: string`)
 
 	result, err := Compile(root)
@@ -142,7 +149,8 @@ func TestCompileLocalCallReportsIndependentErrorsWithoutArtifacts(t *testing.T) 
 func TestCompileProjectDeterministic(t *testing.T) {
 	root := t.TempDir()
 	writeProjectFile(t, root, "z.infra", `output childValue = child.value`)
-	writeProjectFile(t, root, "a.infra", `module child "child" from "./child" { value: "root" }`)
+	writeProjectFile(t, root, "imports.infra", `import module Child from "./child"`)
+	writeProjectFile(t, root, "a.infra", `module child = Child("child", { value: "root" })`)
 	writeProjectFile(t, root, "child/z.infra", `output value = value`)
 	writeProjectFile(t, root, "child/a.infra", `input value: string`)
 
@@ -170,9 +178,10 @@ func TestCompileProjectDeterministic(t *testing.T) {
 func TestCompileDiscoversStaticIndexedLocalModules(t *testing.T) {
 	root := t.TempDir()
 	writeProjectFile(t, root, "main.infra", `
+import module Child from "./child"
 const calls = { second: "two", first: "one" }
 static for key, value in calls {
-  module children[key] value from "./child" { name: value }
+  module children[key] = Child(value, { name: value })
 }
 output selected = children["second"].value
 `)
@@ -198,6 +207,37 @@ output value = name
 	rootJSON := string(first.Artifacts[0].Data)
 	if !strings.Contains(rootJSON, `"one"`) || !strings.Contains(rootJSON, `"two"`) || !strings.Contains(rootJSON, `${module.two.value}`) {
 		t.Fatalf("static child modules were not discovered/lowered:\n%s", rootJSON)
+	}
+}
+
+func TestCompileUnusedModuleImportDoesNotDiscoverChild(t *testing.T) {
+	root := t.TempDir()
+	writeProjectFile(t, root, "main.infra", `import module Child from "./child"`)
+	writeProjectFile(t, root, "child/main.infra", `output value = "unused"`)
+
+	result, err := Compile(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Diagnostics) != 0 || len(result.Artifacts) != 1 || result.Artifacts[0].ModuleID != "." {
+		t.Fatalf("unused module import discovered child: %#v", result)
+	}
+}
+
+func TestCompileDoesNotShareModuleImportsAcrossDirectories(t *testing.T) {
+	root := t.TempDir()
+	writeProjectFile(t, root, "main.infra", `
+import module Child from "./child"
+module child = Child("child", {})
+`)
+	writeProjectFile(t, root, "child/main.infra", `module nested = Child("nested", {})`)
+
+	result, err := Compile(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if joined := diagnosticMessages(result); len(result.Artifacts) != 0 || !strings.Contains(joined, `unknown imported module "Child"`) {
+		t.Fatalf("module import leaked into child directory: %v", result.Diagnostics)
 	}
 }
 

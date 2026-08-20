@@ -11,6 +11,10 @@ func (p *preparer) expandDeclarations(declarations []syntax.Declaration, environ
 	var result []syntax.Declaration
 	for _, declaration := range declarations {
 		switch value := declaration.(type) {
+		case *syntax.ModuleImportDeclaration:
+			if environment == nil {
+				result = append(result, cloneDeclaration(declaration, environment, expansion))
+			}
 		case *syntax.ConstDeclaration:
 			if environment == nil {
 				continue
@@ -602,6 +606,10 @@ func cloneDeclaration(declaration syntax.Declaration, environment *staticEnv, ex
 		result.Arguments = cloneObject(value.Arguments, environment, expansion)
 		result.MetaArguments = cloneObject(value.MetaArguments, environment, expansion)
 		result.Providers = cloneProviderMapping(value.Providers, environment, expansion)
+		return &result
+	case *syntax.ModuleImportDeclaration:
+		result := *value
+		result.BaseNode = cloneBase(value.BaseNode, expansion)
 		return &result
 	case *syntax.OutputDeclaration:
 		result := *value

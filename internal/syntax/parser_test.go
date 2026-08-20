@@ -8,30 +8,31 @@ func TestParseProgram(t *testing.T) {
 	source := `
 terraform { requiredVersion: ">= 1.5.0" }
 provider Null from "hashicorp/null" version "3.3.1"
+import module Child from "./child"
 input name: string = "example"
 let label = f"resource-{name}"
 configure nullEast = Null("east", {})
 resource placeholder = nullEast.resource("placeholder", { triggers: { "Name": label } })
 data lookup = nullEast.dataSource("lookup", { inputs: { name: label } })
-module child "child" from "./child" { marker: label } using { "null.east": nullEast }
+module child = Child("child", { marker: label }) using { "null.east": nullEast }
 output id = placeholder.id
 `
 	file, diagnostics := Parse("test.infra", source)
 	if len(diagnostics) != 0 {
 		t.Fatalf("Parse() diagnostics = %v", diagnostics)
 	}
-	if len(file.Declarations) != 9 {
-		t.Fatalf("Parse() declarations = %d, want 9", len(file.Declarations))
+	if len(file.Declarations) != 10 {
+		t.Fatalf("Parse() declarations = %d, want 10", len(file.Declarations))
 	}
 
-	resource, ok := file.Declarations[5].(*ResourceDeclaration)
+	resource, ok := file.Declarations[6].(*ResourceDeclaration)
 	if !ok {
 		t.Fatalf("declaration 5 is %T, want *ResourceDeclaration", file.Declarations[5])
 	}
 	if resource.ProviderConfigName != "nullEast" || resource.Kind != "resource" || resource.Label != "placeholder" {
 		t.Errorf("resource parsed as %#v", resource)
 	}
-	dataSource, ok := file.Declarations[6].(*DataDeclaration)
+	dataSource, ok := file.Declarations[7].(*DataDeclaration)
 	if !ok {
 		t.Fatalf("declaration 6 is %T, want *DataDeclaration", file.Declarations[6])
 	}
@@ -83,24 +84,25 @@ func TestParseAcceptsCompileTimeForms(t *testing.T) {
 
 	file, diagnostics := Parse("compile-time.infra", `
 provider Null from "hashicorp/null"
+import module Child from "./child"
 const regions: list<string> = ["west"]
 static for index, region in regions {
   configure providers[region] = Null({})
   resource items = providers[region].resource(f"item-{region}", {})
-  module children[index] f"child-{region}" from "./child" {}
+  module children[index] = Child(f"child-{region}", {})
 }
 `)
 	if len(diagnostics) != 0 {
 		t.Fatalf("Parse() diagnostics = %v", diagnostics)
 	}
-	if len(file.Declarations) != 3 {
+	if len(file.Declarations) != 4 {
 		t.Fatalf("declarations = %#v", file.Declarations)
 	}
-	constant := file.Declarations[1].(*ConstDeclaration)
+	constant := file.Declarations[2].(*ConstDeclaration)
 	if constant.Name != "regions" || constant.Type == nil || constant.Type.Name != "list" {
 		t.Fatalf("constant = %#v", constant)
 	}
-	loop := file.Declarations[2].(*StaticForDeclaration)
+	loop := file.Declarations[3].(*StaticForDeclaration)
 	if loop.KeyVariable != "index" || loop.ValueVariable != "region" || len(loop.Declarations) != 3 {
 		t.Fatalf("static loop = %#v", loop)
 	}
@@ -126,6 +128,7 @@ func TestParseModuleLanguageExtensions(t *testing.T) {
 
 	file, diagnostics := Parse("test.infra", `
 provider Null from "hashicorp/null"
+import module Child from "./child"
 configure nullProvider = Null
 input machines: map<object {
   address: string,
@@ -134,27 +137,27 @@ input machines: map<object {
   description: "Machines",
   validations: [{ condition: length(machines) > 0, errorMessage: "required" }],
 }
-module child "child" from "./child" { name: each.key } using { null: nullProvider } with { forEach: machines }
+module child = Child("child", { name: each.key }) using { null: nullProvider } with { forEach: machines }
 output selected = {for name, machine in child: name => machine.id if machine.ready}
 moved from "module.old" to "module.child"
 `)
 	if len(diagnostics) != 0 {
 		t.Fatalf("Parse() diagnostics = %v", diagnostics)
 	}
-	if len(file.Declarations) != 6 {
-		t.Fatalf("Parse() declarations = %d, want 6", len(file.Declarations))
+	if len(file.Declarations) != 7 {
+		t.Fatalf("Parse() declarations = %d, want 7", len(file.Declarations))
 	}
-	input := file.Declarations[2].(*InputDeclaration)
+	input := file.Declarations[3].(*InputDeclaration)
 	object := input.Type.Arguments[0]
 	if len(object.Fields) != 2 || !object.Fields[1].Optional || object.Fields[1].Default == nil {
 		t.Fatalf("object type fields = %#v", object.Fields)
 	}
-	module := file.Declarations[3].(*ModuleDeclaration)
+	module := file.Declarations[4].(*ModuleDeclaration)
 	if module.MetaArguments == nil {
 		t.Fatal("module meta-arguments were not parsed")
 	}
-	if _, ok := file.Declarations[5].(*MovedDeclaration); !ok {
-		t.Fatalf("last declaration is %T, want *MovedDeclaration", file.Declarations[5])
+	if _, ok := file.Declarations[6].(*MovedDeclaration); !ok {
+		t.Fatalf("last declaration is %T, want *MovedDeclaration", file.Declarations[6])
 	}
 }
 
@@ -163,6 +166,7 @@ func TestParsePhaseOneForms(t *testing.T) {
 
 	source := `
 provider Null from "hashicorp/null"
+import module Child from "./child"
 input imageId "image_id": string with {
   validate length(imageId) > 0 else "required",
   validations: [{ condition: imageId != "", errorMessage: "legacy" }],
@@ -170,29 +174,29 @@ input imageId "image_id": string with {
 let config = { imageId, }
 configure nullProvider = Null
 resource conditional = nullProvider.resource("conditional", { imageId, }) when imageId != ""
-module child "child" from "./child" {} with { dependsOn: [conditional] } using [nullProvider]
+module child = Child("child", {}) with { dependsOn: [conditional] } using { nullProvider }
 ` + "moved { `module.old[\"x\"]` -> `module.child[\"x\"]`, `null_resource.old` -> `null_resource.new`, }\n"
 	file, diagnostics := Parse("phase.infra", source)
 	if len(diagnostics) != 0 {
 		t.Fatalf("Parse() diagnostics = %v", diagnostics)
 	}
-	input := file.Declarations[1].(*InputDeclaration)
+	input := file.Declarations[2].(*InputDeclaration)
 	if input.WireName != "image_id" || !input.ExplicitWire || len(input.MetadataItems) != 2 {
 		t.Fatalf("input = %#v", input)
 	}
-	local := file.Declarations[2].(*LetDeclaration)
+	local := file.Declarations[3].(*LetDeclaration)
 	if !local.Value.(*ObjectExpression).Fields[0].Punned {
 		t.Fatal("object field was not parsed as a pun")
 	}
-	resource := file.Declarations[4].(*ResourceDeclaration)
+	resource := file.Declarations[5].(*ResourceDeclaration)
 	if resource.Condition == nil {
 		t.Fatal("resource condition was not parsed")
 	}
-	module := file.Declarations[5].(*ModuleDeclaration)
-	if module.Providers == nil || len(module.Providers.Inferred) != 1 || module.MetaArguments == nil {
+	module := file.Declarations[6].(*ModuleDeclaration)
+	if module.Providers == nil || len(module.Providers.Explicit.Fields) != 1 || module.MetaArguments == nil {
 		t.Fatalf("module clauses = %#v", module)
 	}
-	moved := file.Declarations[6].(*MovedDeclaration)
+	moved := file.Declarations[7].(*MovedDeclaration)
 	if len(moved.Items) != 2 || moved.Items[0].From.Raw != `module.old["x"]` {
 		t.Fatalf("moved items = %#v", moved.Items)
 	}
@@ -213,7 +217,10 @@ func TestParsePhaseOneFocusedErrors(t *testing.T) {
 		"missing moved comma":         "moved { `a` -> `b` `c` -> `d`, }",
 		"missing validation comma":    `input value: string with { validate value != "" else "required" }`,
 		"computed validation message": `input value: string with { validate value != "" else f"{value}", }`,
-		"duplicate using":             `module child "child" from "./child" {} using [] using []`,
+		"duplicate using":             `module child = Child("child", {}) using {} using {}`,
+		"inline module source":        `module child "child" from "./child" {}`,
+		"missing module arguments":    `module child = Child("child")`,
+		"extra module argument":       `module child = Child("child", {}, true)`,
 	}
 	for name, source := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -300,10 +307,10 @@ func TestParseInputsSpread(t *testing.T) {
 	t.Parallel()
 
 	file, diagnostics := Parse("forwarding.infra", `
-module child "child" from "./child" {
+module child = Child("child", {
   explicitValue: "explicit",
   ...inputs(config),
-}
+})
 `)
 	if len(diagnostics) != 0 {
 		t.Fatalf("Parse() diagnostics = %v", diagnostics)
@@ -321,7 +328,7 @@ module child "child" from "./child" {
 		t.Fatalf("forwarding value = %#v", forwarding.Value)
 	}
 
-	_, diagnostics = Parse("invalid-forwarding.infra", `module child "child" from "./child" { ...inputs(first, second) }`)
+	_, diagnostics = Parse("invalid-forwarding.infra", `module child = Child("child", { ...inputs(first, second) })`)
 	if len(diagnostics) == 0 {
 		t.Fatal("Parse() accepted forwarding with multiple arguments")
 	}

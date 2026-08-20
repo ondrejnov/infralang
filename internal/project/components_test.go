@@ -8,8 +8,9 @@ import (
 func TestCompileExpandsDirectoryWideComponentBeforeGraphDiscovery(t *testing.T) {
 	root := t.TempDir()
 	writeProjectFile(t, root, "components.infra", `
+import module Child from "./child"
 component ChildCall(value: string) {
-  module child "child" from "./child" { value: value }
+  module child = Child("child", { value: value })
   export result = child.result
 }
 `)
@@ -39,8 +40,9 @@ output result = value
 func TestCompileChecksUnusedComponentExportAgainstLocalInterface(t *testing.T) {
 	root := t.TempDir()
 	writeProjectFile(t, root, "main.infra", `
+import module Child from "./child"
 component ChildCall() {
-  module child "child" from "./child" {}
+  module child = Child("child", {})
   export invalid = child.missing
 }
 instantiate call = ChildCall()
@@ -59,8 +61,9 @@ instantiate call = ChildCall()
 func TestCompileExpandsNestedComponentsAcrossImmediateFiles(t *testing.T) {
 	root := t.TempDir()
 	writeProjectFile(t, root, "a-leaf.infra", `
+import module LeafModule from "registry.example/leaf"
 component Leaf(value: string) {
-  module leaf "leaf" from "registry.example/leaf" { value: value }
+  module leaf = LeafModule("leaf", { value: value })
   export result = leaf.result
 }
 `)
@@ -88,7 +91,8 @@ func TestCompileDoesNotShareComponentsAcrossModules(t *testing.T) {
 	root := t.TempDir()
 	writeProjectFile(t, root, "main.infra", `
 component RootOnly() { export value = "root" }
-module child "child" from "./child" {}
+import module Child from "./child"
+module child = Child("child", {})
 `)
 	writeProjectFile(t, root, "child/main.infra", `
 instantiate invalid = RootOnly()

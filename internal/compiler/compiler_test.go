@@ -27,9 +27,10 @@ data lookup = nullEast.dataSource("lookup", {
     marker: prefix,
   },
 })
-module childModule "child" from "./child" {
+import module Child from "./child"
+module childModule = Child("child", {
   markerValue: prefix,
-} using {
+}) using {
   "null.east": nullEast,
 }
 configure nullEast = Null("east", {})
@@ -304,6 +305,7 @@ func TestCompileModuleLanguageExtensions(t *testing.T) {
 	result := compileSource(t, `
 terraform { requiredVersion: ">= 1.5.0" }
 provider Null from "hashicorp/null" version "3.3.1"
+import module Child from "./child"
 configure nullProvider = Null
 input machines: map<object {
   address: string,
@@ -313,7 +315,7 @@ input machines: map<object {
   validations: [{ condition: length(machines) > 0, errorMessage: "required" }],
 }
 
-module child "child" from "./child" { name: each.key } using { null: nullProvider } with {
+module child = Child("child", { name: each.key }) using { null: nullProvider } with {
   forEach: machines,
   dependsOn: [],
 }
@@ -457,9 +459,10 @@ func TestCompileProviderShorthandAndClauseOrder(t *testing.T) {
 
 	result := compileSource(t, `
 provider Null from "hashicorp/null"
+import module Child from "./child"
 configure nullProvider = Null
 input items: map<string> = {}
-module child "child" from "./child" { marker: each.key } with { forEach: items } using [nullProvider]
+module child = Child("child", { marker: each.key }) with { forEach: items } using [nullProvider]
 `)
 	var document map[string]any
 	if err := json.Unmarshal(result, &document); err != nil {
@@ -477,10 +480,11 @@ func TestCompileRejectsAmbiguousProviderShorthand(t *testing.T) {
 
 	file, parseDiagnostics := syntax.Parse("providers.infra", `
 provider Null from "hashicorp/null"
+import module Child from "./child"
 configure first = Null
 configure second = Null("second", {})
 let notProvider = "value"
-module child "child" from "./child" {} using [first, first, second, notProvider]
+module child = Child("child", {}) using [first, first, second, notProvider]
 `)
 	if len(parseDiagnostics) != 0 {
 		t.Fatal(parseDiagnostics)
@@ -666,7 +670,8 @@ func TestCompileEachUnavailableInOwnForEach(t *testing.T) {
 	t.Parallel()
 
 	file, parseDiagnostics := syntax.Parse("each.infra", `
-module child "child" from "./child" { value: each.value } with { forEach: each.value }
+import module Child from "./child"
+module child = Child("child", { value: each.value }) with { forEach: each.value }
 `)
 	if len(parseDiagnostics) != 0 {
 		t.Fatal(parseDiagnostics)
@@ -682,8 +687,9 @@ func TestCompilePhaseOneErrorRecovery(t *testing.T) {
 
 	file, parseDiagnostics := syntax.Parse("errors.infra", `
 provider Null from "hashicorp/null"
+import module Child from "./child"
 configure nullProvider = Null
-module child "child" from "./child" {} using [missingProvider]
+module child = Child("child", {}) using { missingProvider }
 output independent = missingValue
 `)
 	if len(parseDiagnostics) != 0 {
@@ -979,10 +985,11 @@ func TestCompileTypedEachBindings(t *testing.T) {
 	result := compileSource(t, `
 type HostConfig = object { hostName "host_name": string }
 provider Terraform from "terraform.io/builtin/terraform"
+import module Child from "./child"
 configure terraform = Terraform
 input hosts: map<HostConfig> = { first: { hostName: "node" } }
 input names: set<string> = ["one"]
-module child "child" from "./child" { name: each.value.hostName } with { forEach: hosts }
+module child = Child("child", { name: each.value.hostName }) with { forEach: hosts }
 resource item = terraform.data("item", { input: each.key, value: each.value }, { forEach: names })
 `)
 	if !strings.Contains(string(result), `${each.value.host_name}`) || !strings.Contains(string(result), `${each.key}`) {
@@ -992,13 +999,15 @@ resource item = terraform.data("item", { input: each.key, value: each.value }, {
 	tests := map[string]string{
 		"bad member": `
 type HostConfig = object { hostName: string }
+import module Child from "./child"
 input hosts: map<HostConfig> = {}
-module child "child" from "./child" { name: each.value.missing } with { forEach: hosts }
+module child = Child("child", { name: each.value.missing }) with { forEach: hosts }
 `,
-		"scalar": `module child "child" from "./child" {} with { forEach: 1 }`,
-		"tuple":  `module child "child" from "./child" {} with { forEach: ["one"] }`,
+		"scalar": "import module Child from \"./child\"\nmodule child = Child(\"child\", {}) with { forEach: 1 }",
+		"tuple":  "import module Child from \"./child\"\nmodule child = Child(\"child\", {}) with { forEach: [\"one\"] }",
 		"non-string set": `input values: set<number> = [1]
-module child "child" from "./child" {} with { forEach: values }`,
+import module Child from "./child"
+module child = Child("child", {}) with { forEach: values }`,
 		"outside each": `output invalid = each.value`,
 	}
 	for name, source := range tests {
@@ -1093,11 +1102,12 @@ input retries: number = 1
 output image = imageId
 `)
 	result := compileSourceWithOptions(t, `
+import module Child from "./child"
 input config: object { imageId "image_id": string, retries: number } = { imageId: "ami", retries: 4 }
-module child "child" from "./child" {
+module child = Child("child", {
   ...inputs(config),
   retries: 2,
-}
+})
 output image = child.image
 `, CompileOptions{ModuleID: ".", LocalModules: map[string]ModuleInterface{"./child": child}})
 	var document map[string]any
@@ -1128,26 +1138,28 @@ func TestCompileRejectsInvalidInputForwarding(t *testing.T) {
 		{
 			name: "forward conflict",
 			source: `
+import module Child from "./child"
 let first = { shared: "first" }
 let second = { shared: "second" }
-module child "child" from "./child" { ...inputs(first), ...inputs(second) }
+module child = Child("child", { ...inputs(first), ...inputs(second) })
 `, wantErrors: 2, contains: "multiple forwarding",
 		},
 		{
 			name:       "unknown field",
-			source:     `module child "child" from "./child" { ...inputs({ unknown: "value" }) }`,
+			source:     "import module Child from \"./child\"\nmodule child = Child(\"child\", { ...inputs({ unknown: \"value\" }) })",
 			wantErrors: 1, contains: "not an input",
 		},
 		{
 			name: "dynamic keys",
 			source: `
+import module Child from "./child"
 input values: map<string> = {}
-module child "child" from "./child" { ...inputs(values) }
+module child = Child("child", { ...inputs(values) })
 `, wantErrors: 1, contains: "statically structural",
 		},
 		{
 			name:       "remote boundary",
-			source:     `module child "child" from "registry.example/child" { ...inputs({ shared: "value" }) }`,
+			source:     "import module Child from \"registry.example/child\"\nmodule child = Child(\"child\", { ...inputs({ shared: \"value\" }) })",
 			wantErrors: 1, contains: "local InfraLang child",
 		},
 		{
@@ -1186,10 +1198,11 @@ input nested: object { value: number }
 output result = requiredName
 `)
 	file, parseDiagnostics := syntax.Parse("parent.infra", `
-module child "child" from "./child" {
+import module Child from "./child"
+module child = Child("child", {
   unknown: true,
   nested: { value: "wrong" },
-}
+})
 output missing = child.missing
 `)
 	if len(parseDiagnostics) != 0 {
@@ -1215,8 +1228,9 @@ func TestCompileRequiresIndexForIteratedLocalModuleOutputs(t *testing.T) {
 
 	child := collectInterfaceSource(t, "child", `output value = "child"`)
 	file, parseDiagnostics := syntax.Parse("iterated.infra", `
+import module Child from "./child"
 input items: map<string> = {}
-module child "child" from "./child" {} with { forEach: items }
+module child = Child("child", {}) with { forEach: items }
 output invalid = child.value
 `)
 	if len(parseDiagnostics) != 0 {
@@ -1243,23 +1257,25 @@ configure childNull = Null
 	}{
 		{
 			name:     "missing",
-			source:   `module child "child" from "./child" {}`,
+			source:   "import module Child from \"./child\"\nmodule child = Child(\"child\", {})",
 			contains: "missing provider slot",
 		},
 		{
 			name: "unknown",
 			source: `
 provider Null from "hashicorp/null"
+import module Child from "./child"
 configure parentNull = Null
-module child "child" from "./child" {} using { other: parentNull }
+module child = Child("child", {}) using { other: parentNull }
 `, contains: "unknown provider slot",
 		},
 		{
 			name: "source mismatch",
 			source: `
 provider Random from "hashicorp/random"
+import module Child from "./child"
 configure random = Random
-module child "child" from "./child" {} using { childNull: random }
+module child = Child("child", {}) using { childNull: random }
 `, contains: "requires source",
 		},
 	}
@@ -1334,11 +1350,12 @@ func TestCompileTimeLabelsAndProviderAliases(t *testing.T) {
 
 	result := compileSource(t, `
 provider Null from "hashicorp/null"
+import module Child from "registry.example/child"
 const suffix = "stable"
 configure selected = Null(f"west-{suffix}", {})
 resource item = selected.resource(f"resource-{suffix}", {})
 data lookup = selected.dataSource(f"lookup-{suffix}", {})
-module child f"module-{suffix}" from "registry.example/child" {}
+module child = Child(f"module-{suffix}", {})
 `)
 	text := string(result)
 	for _, expected := range []string{`"alias": "west-stable"`, `"resource-stable"`, `"lookup-stable"`, `"module-stable"`} {
@@ -1389,13 +1406,14 @@ func TestCompileStaticIndexedProvidersAndModules(t *testing.T) {
 
 	result := compileSource(t, `
 provider Null from "hashicorp/null"
+import module Child from "registry.example/child"
 const regions = {
   west: { label: "west_child" },
   east: { label: "east_child" },
 }
 static for key, region in regions {
   configure providers[key] = Null({})
-  module children[key] region.label from "registry.example/child" {} using { "null": providers[key] }
+  module children[key] = Child(region.label, {}) using { "null": providers[key] }
 }
 output westId = children["west"].id
 `)
@@ -1425,14 +1443,15 @@ func TestCompileNestedStaticLoopsAndNumericModuleIndexes(t *testing.T) {
 	t.Parallel()
 
 	result := compileSource(t, `
+import module Child from "registry.example/child"
 const groups = ["a", "b"]
 static for group in groups {
   static for index, suffix in ["one", "two"] {
-    module children[f"{group}-{index + 9007199254740993}"] f"{group}-{suffix}" from "registry.example/child" {}
+    module children[f"{group}-{index + 9007199254740993}"] = Child(f"{group}-{suffix}", {})
   }
 }
 output selected = children["b-9007199254740994"].id
-module numeric[9007199254740992 + 1] "numeric" from "registry.example/child" {}
+module numeric[9007199254740992 + 1] = Child("numeric", {})
 output numericId = numeric[9007199254740993].id
 `)
 	var document map[string]any
@@ -1462,8 +1481,8 @@ func TestCompileRejectsInvalidStaticLabelsAndIndexes(t *testing.T) {
 		{name: "dynamic label", source: "provider Terraform from \"terraform.io/builtin/terraform\"\nconfigure terraform = Terraform\ninput label: string\nresource item = terraform.data(label, {})", contains: "runtime or unknown name"},
 		{name: "invalid label", source: "provider Terraform from \"terraform.io/builtin/terraform\"\nconfigure terraform = Terraform\nresource item = terraform.data(\"bad.label\", {})", contains: "not a valid Terraform identifier"},
 		{name: "numeric provider", source: "provider Null from \"hashicorp/null\"\nconfigure providers[1] = Null({})", contains: "indexed provider key"},
-		{name: "unknown lookup", source: "module children[\"known\"] \"known\" from \"remote/child\" {}\noutput missing = children[\"missing\"].id", contains: "unknown indexed handle"},
-		{name: "duplicate numeric index", source: "module children[1.0] \"first\" from \"remote/child\" {}\nmodule children[1] \"second\" from \"remote/child\" {}", contains: "already declared"},
+		{name: "unknown lookup", source: "import module Child from \"remote/child\"\nmodule children[\"known\"] = Child(\"known\", {})\noutput missing = children[\"missing\"].id", contains: "unknown indexed handle"},
+		{name: "duplicate numeric index", source: "import module Child from \"remote/child\"\nmodule children[1.0] = Child(\"first\", {})\nmodule children[1] = Child(\"second\", {})", contains: "already declared"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -1521,15 +1540,17 @@ func TestCompileTimeIdentityIgnoresSourceHandleRenames(t *testing.T) {
 
 	first := compileSource(t, `
 provider Null from "hashicorp/null"
+import module Child from "registry.example/child"
 configure providers["west"] = Null({})
 resource sourceItem = providers["west"].resource("stable_resource", {})
-module children[1] "stable_module" from "registry.example/child" {}
+module children[1] = Child("stable_module", {})
 output resourceId = sourceItem.id
 output moduleId = children[1].id
 `)
 	second := compileSource(t, `
+import module Child from "registry.example/child"
 output moduleId = renamedModules[1.0].id
-module renamedModules[1.0] "stable_module" from "registry.example/child" {}
+module renamedModules[1.0] = Child("stable_module", {})
 output resourceId = renamedItem.id
 resource renamedItem = renamedProviders["west"].resource("stable_resource", {})
 configure renamedProviders["west"] = Null({})
@@ -1541,9 +1562,10 @@ provider Null from "hashicorp/null"
 
 	changed := compileSource(t, `
 provider Null from "hashicorp/null"
+import module Child from "registry.example/child"
 configure providers["west"] = Null({})
 resource sourceItem = providers["west"].resource("changed_resource", {})
-module children[1] "changed_module" from "registry.example/child" {}
+module children[1] = Child("changed_module", {})
 `)
 	if string(first) == string(changed) || !strings.Contains(string(changed), `"changed_resource"`) || !strings.Contains(string(changed), `"changed_module"`) {
 		t.Fatalf("explicit identity change was not reflected:\n%s", changed)

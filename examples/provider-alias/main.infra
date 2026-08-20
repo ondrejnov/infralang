@@ -3,6 +3,7 @@ terraform {
 }
 
 provider Null from "hashicorp/null" version "3.3.1"
+import module Child from "./child"
 
 input marker: string = "alias-validation"
 
@@ -14,9 +15,9 @@ resource placeholder = nullEast.resource("placeholder", {
   },
 })
 
-module childModule "child" from "./child" {
+module childModule = Child("child", {
   marker: marker,
-} using {
+}) using {
   "null.east": nullEast,
 }
 

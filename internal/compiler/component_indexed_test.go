@@ -9,8 +9,9 @@ func TestCompileComponentExportResolvesInternalIndexedHandle(t *testing.T) {
 	t.Parallel()
 
 	result := compileSource(t, `
+import module Child from "registry.example/child"
 component Indexed() {
-  module children["key"] "child" from "registry.example/child" {}
+  module children["key"] = Child("child", {})
   export id = children["key"].id
 }
 instantiate indexed = Indexed()
@@ -25,8 +26,9 @@ func TestCompileStaticLoopCanInstantiateIndexedComponents(t *testing.T) {
 	t.Parallel()
 
 	result := compileSource(t, `
+import module ChildModule from "registry.example/child"
 component Child(label: string) {
-  module child label from "registry.example/child" {}
+  module child = ChildModule(label, {})
   export id = child.id
 }
 static for label in ["first", "second"] {

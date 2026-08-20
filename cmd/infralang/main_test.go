@@ -12,7 +12,7 @@ func TestCompileProjectIncludesLocalInfraModules(t *testing.T) {
 	if err := os.Mkdir(child, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(directory, "main.infra"), []byte(`module child "child" from "./child" {}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(directory, "main.infra"), []byte("import module Child from \"./child\"\nmodule child = Child(\"child\", {})"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(child, "main.infra"), []byte(`input name: string = "child"`), 0o600); err != nil {
@@ -37,7 +37,7 @@ func TestCompileProjectDelegatesLocalValidationAndReturnsNoPartialArtifacts(t *t
 	if err := os.Mkdir(child, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(directory, "main.infra"), []byte(`module child "child" from "./child" { unknown: true }`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(directory, "main.infra"), []byte("import module Child from \"./child\"\nmodule child = Child(\"child\", { unknown: true })"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(child, "main.infra"), []byte(`input required: string`), 0o600); err != nil {

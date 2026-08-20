@@ -83,6 +83,14 @@ type TypeImportDeclaration struct {
 
 func (*TypeImportDeclaration) declarationNode() {}
 
+type ModuleImportDeclaration struct {
+	BaseNode
+	Name   string
+	Source string
+}
+
+func (*ModuleImportDeclaration) declarationNode() {}
+
 type ConstDeclaration struct {
 	BaseNode
 	Name  string
@@ -242,6 +250,7 @@ type ModuleDeclaration struct {
 	BaseNode
 	Name            string
 	Index           Expression
+	ModuleName      string
 	Label           string
 	LabelExpression Expression
 	Source          string

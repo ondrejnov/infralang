@@ -2,6 +2,7 @@ terraform { requiredVersion: ">= 1.5.0" }
 
 provider Libvirt from "dmacvicar/libvirt" version "~> 0.9.3"
 provider Lvm from "github.com/ondrejnov/lvm" version "0.5.0"
+import module LibvirtVm from "../libvirt_vm"
 
 # Provider handles are inherited from each host module call and emit no child provider blocks.
 configure libvirt = Libvirt
@@ -41,7 +42,7 @@ resource cloudinitPool = libvirt.pool("cloudinit", {
   destroy: { delete: false },
 })
 
-module vmModule "vm" from "../libvirt_vm" {
+module vmModule = LibvirtVm("vm", {
   adoptExisting: each.value.adoptExisting,
   commonConfig,
   cpuMode: each.value.cpuMode,
@@ -54,7 +55,7 @@ module vmModule "vm" from "../libvirt_vm" {
   running: each.value.running,
   serialConsoleEnabled: each.value.serialConsoleEnabled,
   vcpu: each.value.vcpu,
-} using [libvirt, lvm] with {
+}) using { libvirt, lvm } with {
   forEach: vms,
   dependsOn: [network, cloudinitPool],
 }

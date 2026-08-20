@@ -67,7 +67,7 @@ func (p *parser) parseDeclaration() Declaration {
 	case p.checkIdentifier("export"):
 		return p.parseExportTypeAliasDeclaration()
 	case p.checkIdentifier("import"):
-		return p.parseTypeImportDeclaration()
+		return p.parseImportDeclaration()
 	case p.checkIdentifier("const"):
 		return p.parseConstDeclaration()
 	case p.checkIdentifier("static"):
@@ -313,11 +313,21 @@ func (p *parser) parseTypeAliasDeclaration(exported bool, start Position) Declar
 	}
 }
 
-func (p *parser) parseTypeImportDeclaration() Declaration {
+func (p *parser) parseImportDeclaration() Declaration {
 	start := p.advance().Span.Start
-	if !p.expectIdentifier("type") {
+	switch {
+	case p.checkIdentifier("type"):
+		return p.parseTypeImportDeclaration(start)
+	case p.checkIdentifier("module"):
+		return p.parseModuleImportDeclaration(start)
+	default:
+		p.report(p.peek(), "expected 'type' or 'module' after 'import'")
 		return nil
 	}
+}
+
+func (p *parser) parseTypeImportDeclaration(start Position) Declaration {
+	p.advance()
 	p.expect(TokenLeftBrace, "expected '{' after 'import type'")
 	var items []TypeImportItem
 	localNames := make(map[string]Token)
@@ -352,6 +362,16 @@ func (p *parser) parseTypeImportDeclaration() Declaration {
 	}
 	path := p.expect(TokenString, "expected relative .infra import path")
 	return &TypeImportDeclaration{BaseNode: p.base(start, path.Span.End), Items: items, Path: path.Lexeme}
+}
+
+func (p *parser) parseModuleImportDeclaration(start Position) Declaration {
+	p.advance()
+	name := p.expect(TokenIdentifier, "expected imported module name")
+	if !p.expectIdentifier("from") {
+		return nil
+	}
+	source := p.expect(TokenString, "expected module source")
+	return &ModuleImportDeclaration{BaseNode: p.base(start, source.Span.End), Name: name.Lexeme, Source: source.Lexeme}
 }
 
 func (p *parser) parseTerraformDeclaration() Declaration {
@@ -690,23 +710,28 @@ func (p *parser) parseModuleDeclaration() Declaration {
 		index = p.parseExpression()
 		p.expect(TokenRightBracket, "expected ']' after module index")
 	}
+	p.expect(TokenAssign, "expected '=' after module name")
+	moduleName := p.expect(TokenIdentifier, "expected imported module name")
+	p.expect(TokenLeftParen, "expected '(' after imported module name")
 	labelExpression := p.parseExpression()
 	if labelExpression == nil {
 		return nil
 	}
-	if !p.expectIdentifier("from") {
+	if !p.match(TokenComma) {
+		p.report(p.peek(), "expected ',' after module label")
 		return nil
 	}
-	source := p.expect(TokenString, "expected module source")
 	arguments := p.parseObjectExpression()
 	if arguments == nil {
 		return nil
 	}
+	p.match(TokenComma)
+	close := p.expect(TokenRightParen, "expected ')' after module arguments")
 	var providers *ProviderMapping
 	var meta *ObjectExpression
 	seenUsing := false
 	seenWith := false
-	end := arguments.GetSpan().End
+	end := close.Span.End
 	for p.checkIdentifier("using") || p.checkIdentifier("with") {
 		if p.matchIdentifier("using") {
 			if seenUsing {
@@ -735,9 +760,9 @@ func (p *parser) parseModuleDeclaration() Declaration {
 		BaseNode:        p.base(start, end),
 		Name:            name.Lexeme,
 		Index:           index,
+		ModuleName:      moduleName.Lexeme,
 		Label:           label,
 		LabelExpression: labelExpression,
-		Source:          source.Lexeme,
 		Arguments:       arguments,
 		Providers:       providers,
 		MetaArguments:   meta,

@@ -128,17 +128,20 @@ The wire key still follows the normal object-key rule.
 
 ### Provider mapping shorthand
 
-When the child provider slot and local provider handle have the same name, a
-module can use array shorthand:
+When the child provider slot and local provider handle have the same name, an
+object pun avoids repeating the mapping:
 
 ```infra
-module child "child" from "./modules/child" {
+import module Child from "./modules/child"
+
+module child = Child("child", {
   region,
-} using [aws]
+}) using { aws }
 ```
 
 This is equivalent to `using { aws: aws }`. The expanded mapping is checked in
-the same way as the long form.
+the same way as the long form. The inferred array form `using [aws]` is also
+accepted when the provider's Terraform local name should determine the slot.
 
 ### Concise validation
 
@@ -265,10 +268,12 @@ child source is recursively compiled and checked when its canonical directory
 contains InfraLang files:
 
 ```infra
-module vm "vm" from "../libvirt_vm" {
+import module LibvirtVm from "../libvirt_vm"
+
+module vm = LibvirtVm("vm", {
   hostname: each.key,
   commonConfig,
-} using [libvirt, lvm] with {
+}) using { libvirt, lvm } with {
   forEach: machines,
   dependsOn: [network],
 }
@@ -282,15 +287,23 @@ Remote registry modules, remote URLs, and local Terraform-only directories are
 explicit unchecked interface boundaries. Their source and provider mapping are
 emitted for Terraform to resolve.
 
+`import module Name from "source"` is directory-scoped and compile-time only.
+It separates the reusable source from each instance's InfraLang handle,
+Terraform label, arguments, providers, and metadata. Duplicate import names and
+unknown imported module names are rejected. Imports do not emit Terraform
+blocks; only `module handle = Name(label, arguments)` declarations do.
+
 ### Checked input forwarding
 
 `...inputs(value)` is valid only inside a module argument object:
 
 ```infra
-module child "child" from "./child" {
+import module Child from "./child"
+
+module child = Child("child", {
   ...inputs(config),
   hostname: overrideName,
-}
+})
 ```
 
 The forwarded value must have a statically known structural object type. Its
@@ -325,8 +338,10 @@ values cannot be referenced. Constant dependency cycles are diagnosed.
 ### Deterministic static loops
 
 ```infra
+import module Child from "./child"
+
 static for key, environment in environments {
-  module children[key] environment.label from "./child" {}
+  module children[key] = Child(environment.label, {})
 }
 ```
 
@@ -352,6 +367,8 @@ Resource/data labels, module labels, and indexed handle keys can be compile-time
 expressions:
 
 ```infra
+import module Child from "registry.example/child"
+
 const regions = {
   east: { label: "east_child" },
   west: { label: "west_child" },
@@ -359,7 +376,7 @@ const regions = {
 
 static for key, region in regions {
   configure providers[key] = Null({})
-  module children[key] region.label from "registry.example/child" {} using {
+  module children[key] = Child(region.label, {}) using {
     "null": providers[key],
   }
 }
@@ -396,13 +413,15 @@ and environment-dependent search paths are not supported.
 A component is a typed, directory-scoped declaration template:
 
 ```infra
+import module LibvirtHost from "./modules/libvirt_host"
+
 component HostDeployment(label: string, config: HostCallConfig) using {
   libvirt: Libvirt,
   lvm: Lvm,
 } {
-  module host label from "./modules/libvirt_host" {
+  module host = LibvirtHost(label, {
     ...inputs(config),
-  } using [libvirt, lvm]
+  }) using { libvirt, lvm }
 
   export vms = host.vms
 }
@@ -480,7 +499,9 @@ traversal so lifecycle paths cannot be confused with ordinary strings.
 Module Terraform meta-arguments are separated with `with`:
 
 ```infra
-module child "child" from "./child" {} with {
+import module Child from "./child"
+
+module child = Child("child", {}) with {
   forEach: machines,
   dependsOn: [network],
 }
@@ -496,7 +517,7 @@ InfraLang intentionally keeps the phases separate:
 
 | Construct | Evaluation time | May depend on Terraform runtime values | Emitted directly |
 | --- | --- | --- | --- |
-| `type`, `import type` | project loading/checking | no | no |
+| `type`, `import type`, `import module` | project loading/checking | no | no |
 | `const` | compile time | no | no |
 | `static for` | compile time | no | no |
 | `component`, `instantiate`, `export` | compile time | no | no |
@@ -508,7 +529,7 @@ InfraLang intentionally keeps the phases separate:
 Compile-time code cannot perform file or environment reads, execute commands,
 contact networks, query providers, inspect Terraform state, or call Terraform
 functions. Its only external input is canonical project source loaded by the
-type-import and local-module resolver. This makes elaboration deterministic and
+type-import and imported-local-module resolver. This makes elaboration deterministic and
 prevents configuration compilation from becoming a secret-exfiltration or
 arbitrary-code-execution surface.
 
@@ -525,10 +546,10 @@ Terraform identity comes only from address-contributing declarations:
 - module explicit label
 - Terraform runtime `count`/`for_each` keys
 
-InfraLang source handles, constant names, static iterator names, component
-names, component parameter names, and component instance handles are not
-Terraform identity. Renaming or reordering only those source constructs must
-not change generated addresses.
+InfraLang import names, source handles, constant names, static iterator names,
+component names, component parameter names, and component instance handles are
+not Terraform identity. Renaming or reordering only those source constructs
+must not change generated addresses.
 
 Conversely, changing a resource/data/module label, provider alias, provider
 source, module source, static key used as an alias/label, or Terraform runtime
@@ -554,6 +575,7 @@ No representation of these constructs may survive into Terraform JSON:
 - constants and static loops
 - source/wire alias declarations
 - named type aliases and type imports
+- module imports
 - components, instances, parameters, or virtual exports
 - indexed handle tables
 - compile-time provenance metadata

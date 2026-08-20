@@ -229,6 +229,8 @@ func (c *compiler) collectDeclarations() {
 			c.typeAliases[value.Name] = &typeAliasInfo{declaration: value}
 		case *syntax.TypeImportDeclaration:
 			c.addDiagnostic(value.GetSpan(), "type imports require project compilation")
+		case *syntax.ModuleImportDeclaration:
+			// Module imports are bound and erased during preparation.
 		case *syntax.LetDeclaration:
 			c.collectSymbol(value.Name, symbolLocal, value.GetSpan())
 			if _, exists := c.symbols[value.Name]; exists {

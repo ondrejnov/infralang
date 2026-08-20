@@ -4,6 +4,7 @@ terraform {
 
 provider Libvirt from "dmacvicar/libvirt" version "~> 0.9.3"
 provider Lvm from "github.com/ondrejnov/lvm" version "0.5.0"
+import module LibvirtHost from "./modules/libvirt_host"
 
 # The explicit wire alias preserves compatibility with terraform.tfvars while source code uses camelCase.
 input vmDefaults "vm_defaults": VmDefaults with {
@@ -55,9 +56,9 @@ component HostDeployment(label: string, config: HostCallConfig) using {
   libvirt: Libvirt,
   lvm: Lvm,
 } {
-  module host label from "./modules/libvirt_host" {
+  module host = LibvirtHost(label, {
     ...inputs(config),
-  } using [libvirt, lvm]
+  }) using { libvirt, lvm }
   export vms = host.vms
 }
 

@@ -45,9 +45,10 @@ func TestCompileComponentAcceptsRuntimeArguments(t *testing.T) {
 	t.Parallel()
 
 	result := compileSource(t, `
+import module Child from "registry.example/child"
 input runtimeValue: string = "runtime"
 component Wrapper(value: string) {
-  module child "stable_child" from "registry.example/child" { value: value }
+  module child = Child("stable_child", { value: value })
   export result = child.result
 }
 instantiate wrapper = Wrapper(value: runtimeValue)
@@ -105,9 +106,10 @@ func TestCompileComponentParameterShadowsGlobalConstant(t *testing.T) {
 	t.Parallel()
 
 	result := compileSource(t, `
+import module Child from "registry.example/child"
 const value = "global"
 component Value(value: string) {
-  module child "child" from "registry.example/child" { value: value }
+  module child = Child("child", { value: value })
 }
 instantiate selected = Value(value: "argument")
 `)
@@ -138,8 +140,9 @@ func TestCompileNestedComponentsExpandAcyclically(t *testing.T) {
 	t.Parallel()
 
 	result := compileSource(t, `
+import module LeafModule from "registry.example/leaf"
 component Leaf(value: string) {
-  module leaf "leaf" from "registry.example/leaf" { value: value }
+  module leaf = LeafModule("leaf", { value: value })
   export result = leaf.result
 }
 component Outer(value: string) {
@@ -193,8 +196,9 @@ func TestCompileComponentNumericIndexIsExact(t *testing.T) {
 	t.Parallel()
 
 	result := compileSource(t, `
+import module ChildModule from "registry.example/child"
 component Child(label: string) {
-  module child label from "registry.example/child" {}
+  module child = ChildModule(label, {})
   export id = child.id
 }
 instantiate children[9007199254740992 + 1] = Child(label: "exact_child")
@@ -363,7 +367,7 @@ instantiate second = Item()
 		{name: "invalid lookup index", source: "input key: string\ncomponent Item() { export value = 1 }\ninstantiate items[\"known\"] = Item()\noutput invalid = items[key].value", contains: "component lookup index"},
 		{name: "direct indexed handle", source: "component Item() { export value = 1 }\ninstantiate items[\"known\"] = Item()\noutput invalid = items[\"known\"]", contains: "only through a named export"},
 		{name: "constant conflict", source: "const item = 1\ncomponent Item() { export value = 1 }\ninstantiate item = Item()", contains: "conflicts with constant"},
-		{name: "indexed namespace conflict", source: "module items[\"module\"] \"module\" from \"remote/module\" {}\ncomponent Item() {}\ninstantiate items[\"component\"] = Item()", contains: "conflicts with an indexed provider or module namespace"},
+		{name: "indexed namespace conflict", source: "import module Remote from \"remote/module\"\nmodule items[\"module\"] = Remote(\"module\", {})\ncomponent Item() {}\ninstantiate items[\"component\"] = Item()", contains: "conflicts with an indexed provider or module namespace"},
 		{name: "export dependency cycle", source: "component Pass(value: dynamic) { export result = value }\ninstantiate first = Pass(value: second.result)\ninstantiate second = Pass(value: first.result)", contains: "component export dependency cycle"},
 	}
 	for _, test := range tests {

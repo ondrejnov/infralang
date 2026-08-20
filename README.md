@@ -346,8 +346,8 @@ InfraLang's three implemented language phases are cumulative:
    ordered spreads and conditional fields, typed `each`, checked local module
    interfaces, and `...inputs(value)` forwarding.
 3. Phase 3 adds exact constants, deterministic `static for`, compile-time
-   labels and indexed handles, canonical `import type`, and hygienic reusable
-   components with virtual exports.
+	labels and indexed handles, canonical type and module imports, and hygienic
+	reusable components with virtual exports.
 
 Compile-time declarations erase completely. Terraform JSON contains only
 ordinary Terraform settings, providers, variables, locals, resources, data
@@ -355,11 +355,12 @@ sources, modules, outputs, and explicit moved items.
 
 ```infra
 import type { HostConfig } from "./types.infra"
+import module HostModule from "./modules/host"
 
 const hosts = { west: { label: "host_west" } }
 
 component Host(label: string, config: HostConfig) using { null: Null } {
-  module child label from "./modules/host" { ...inputs(config) } using [null]
+  module child = HostModule(label, { ...inputs(config) }) using { null }
   export id = child.id
 }
 
@@ -402,11 +403,13 @@ canonicalized, recursively compiled, and interface-checked. Remote modules and
 Terraform-only directories remain explicit unchecked boundaries; Terraform
 also remains responsible for provider schemas and version-constraint solving.
 
-Compile-time imports may read only canonical relative `.infra` files inside the
-project root. Constants, static loops, and components cannot read files or the
-environment, contact networks or providers, execute commands, or evaluate
-Terraform runtime expressions. Sensitive diagnostics report locations and type
-contracts without serializing values.
+Type imports may read only canonical relative `.infra` files inside the project
+root. Module imports name local directories, registry modules, or URLs; local
+InfraLang directories are canonicalized and recursively checked. Constants,
+static loops, and components cannot read files or the environment, contact
+networks or providers, execute commands, or evaluate Terraform runtime
+expressions. Sensitive diagnostics report locations and type contracts without
+serializing values.
 
 Terraform identity always comes from explicit resource/data/module labels and
 provider aliases. Renaming source symbols, iterators, parameters, or component

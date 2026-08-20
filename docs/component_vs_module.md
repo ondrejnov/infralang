@@ -10,18 +10,20 @@ construct is expanded and whether it remains a boundary in generated Terraform.
 | Parameters | Child-module `input` and `output` declarations | Typed parameters and `export` declarations |
 | Terraform output | Remains a Terraform `module` | Is expanded during compilation and disappears |
 | Terraform state | Creates a namespace such as `module.vm` | Does not create a namespace or state boundary |
-| Source | A local directory, registry module, or URL | A local `component` declaration |
+| Source | A directory-scoped `import module` naming a local directory, registry module, or URL | A local `component` declaration |
 | Checking | Local InfraLang modules have checked interfaces; remote modules are unchecked boundaries | Arguments, exports, and provider slots are statically checked |
 
 ## Modules
 
-All immediate `.infra` files in one directory form one InfraLang module. A
-`module` declaration instantiates another module, for example:
+All immediate `.infra` files in one directory form one InfraLang module. Import
+the child source once, then instantiate the imported module by name:
 
 ```infra
-module vm "production_vm" from "./modules/vm" {
+import module Vm from "./modules/vm"
+
+module vm = Vm("production_vm", {
   hostname: "server-01",
-} using [libvirt]
+}) using { libvirt }
 ```
 
 The child module has its own interface, primarily defined by `input`, `output`,
@@ -30,8 +32,9 @@ InfraLang files is recursively compiled and its interface is checked. Registry
 modules, remote URLs, and local Terraform-only directories are explicit
 unchecked interface boundaries.
 
-The declaration remains a module in generated Terraform and contributes a
-module namespace to resource addresses, for example:
+The import itself emits nothing. The `module vm` declaration remains a module
+in generated Terraform and contributes a module namespace to resource
+addresses, for example:
 
 ```text
 module.production_vm.libvirt_domain.server

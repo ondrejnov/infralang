@@ -70,8 +70,9 @@ func TestSensitiveTypeMismatchIsRedacted(t *testing.T) {
 
 	child := collectInterfaceSource(t, "child", `input requiredValue: number`)
 	file, parseDiagnostics := syntax.Parse("sensitive.infra", `
+import module Child from "./child"
 input credentials: object { token: string } = { token: "DO_NOT_EXPOSE_SECRET" } with { sensitive: true }
-module child "child" from "./child" { "requiredValue": credentials.token }
+module child = Child("child", { "requiredValue": credentials.token })
 `)
 	if len(parseDiagnostics) != 0 {
 		t.Fatal(parseDiagnostics)
@@ -92,8 +93,10 @@ func TestSensitiveChildOutputRemainsRedactedAcrossInterface(t *testing.T) {
 	source := collectInterfaceSource(t, "source", `output secret = "DO_NOT_EXPOSE_SECRET" with { sensitive: true }`)
 	sink := collectInterfaceSource(t, "sink", `input requiredValue: number`)
 	file, parseDiagnostics := syntax.Parse("sensitive-output.infra", `
-module source "source" from "./source" {}
-module sink "sink" from "./sink" { "requiredValue": source.secret }
+import module Source from "./source"
+import module Sink from "./sink"
+module source = Source("source", {})
+module sink = Sink("sink", { "requiredValue": source.secret })
 `)
 	if len(parseDiagnostics) != 0 {
 		t.Fatal(parseDiagnostics)
@@ -105,5 +108,62 @@ module sink "sink" from "./sink" { "requiredValue": source.secret }
 	}
 	if !strings.Contains(joined, "sensitive string") || strings.Contains(joined, "DO_NOT_EXPOSE_SECRET") {
 		t.Fatalf("sensitive child output diagnostic was not redacted: %v", diagnostics)
+	}
+}
+
+func TestPrepareBindsModuleImportAndCompileErasesIt(t *testing.T) {
+	t.Parallel()
+
+	file, parseDiagnostics := syntax.Parse("module-import.infra", `
+import module Child from "registry.example/child"
+module child = Child("child", { value: "ok" })
+`)
+	if len(parseDiagnostics) != 0 {
+		t.Fatal(parseDiagnostics)
+	}
+	prepared, diagnostics := Prepare(file)
+	if len(diagnostics) != 0 {
+		t.Fatal(diagnostics)
+	}
+	module := prepared.Declarations[1].(*syntax.ModuleDeclaration)
+	if module.ModuleName != "Child" || module.Source != "registry.example/child" {
+		t.Fatalf("bound module = %#v", module)
+	}
+	result, diagnostics := Compile(prepared)
+	if len(diagnostics) != 0 {
+		t.Fatal(diagnostics)
+	}
+	if text := string(result); !strings.Contains(text, `"source": "registry.example/child"`) || strings.Contains(text, "Child") {
+		t.Fatalf("compiled module import:\n%s", result)
+	}
+}
+
+func TestPrepareRejectsInvalidModuleImports(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"unknown": `module child = Missing("child", {})`,
+		"duplicate": `
+import module Child from "first/child"
+import module Child from "second/child"
+module child = Child("child", {})
+`,
+		"nested": `
+component Invalid() {
+  import module Child from "remote/child"
+}
+`,
+	}
+	for name, source := range tests {
+		t.Run(name, func(t *testing.T) {
+			file, parseDiagnostics := syntax.Parse(name+".infra", source)
+			if len(parseDiagnostics) != 0 {
+				t.Fatal(parseDiagnostics)
+			}
+			_, diagnostics := Prepare(file)
+			if len(diagnostics) == 0 {
+				t.Fatal("Prepare() returned no diagnostics")
+			}
+		})
 	}
 }
