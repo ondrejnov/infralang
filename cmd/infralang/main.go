@@ -144,6 +144,22 @@ func runCheck(arguments []string) error {
 		fmt.Printf("%s: ok\n", sourcePath)
 		return nil
 	}
+	module, err := hasSiblingInfraFiles(sourcePath)
+	if err != nil {
+		return err
+	}
+	if module {
+		_, diagnostics, err := compileProject(filepath.Dir(sourcePath))
+		if err != nil {
+			return err
+		}
+		if len(diagnostics) > 0 {
+			printDiagnostics(os.Stderr, diagnostics)
+			return fmt.Errorf("check failed with %d error(s)", len(diagnostics))
+		}
+		fmt.Printf("%s: ok\n", sourcePath)
+		return nil
+	}
 	_, diagnostics, err := compileFile(sourcePath)
 	if err != nil {
 		return err
@@ -157,7 +173,8 @@ func runCheck(arguments []string) error {
 }
 
 func compileProject(root string) ([]buildArtifact, []syntax.Diagnostic, error) {
-	result, err := project.Compile(root)
+	schemas, _ := loadProviderSchemas(root)
+	result, err := project.CompileWithOptions(root, compiler.CompileOptions{ProviderSchemas: schemas})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -182,6 +199,24 @@ func compileFile(sourcePath string) ([]byte, []syntax.Diagnostic, error) {
 	}
 	result, diagnostics := compiler.Compile(file)
 	return result, compiler.SortedDiagnostics(diagnostics), nil
+}
+
+func hasSiblingInfraFiles(sourcePath string) (bool, error) {
+	entries, err := os.ReadDir(filepath.Dir(sourcePath))
+	if err != nil {
+		return false, fmt.Errorf("inspect module directory %s: %w", filepath.Dir(sourcePath), err)
+	}
+	count := 0
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".infra" {
+			continue
+		}
+		count++
+		if count > 1 {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func writeAtomically(outputPath string, data []byte) error {

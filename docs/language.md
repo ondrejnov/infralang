@@ -223,6 +223,21 @@ type-only import from another file. Aliases are structural, not nominal: a
 value is assignable when its shape and member types satisfy the expanded target
 contract. Alias cycles and duplicate source or wire fields are rejected.
 
+Provider nested blocks are inferred from the provider schema rather than from
+the InfraLang value type. An object value assigned to a provider field declared
+as a nested block is lowered to Terraform JSON as an array containing one
+object, so ordinary object syntax remains valid:
+
+```infra
+type SshConfig = object { host: string, user: string }
+input ssh: SshConfig
+configure lvm = Lvm({ ssh })
+```
+
+The CLI obtains provider schemas with `terraform providers schema -json` when
+compiling a module. Direct compiler callers can provide the same metadata via
+`CompileOptions.ProviderSchemas`.
+
 An `optional<T>` input without an explicit default becomes a nullable Terraform
 variable with `default = null` and the inner Terraform constraint `T`.
 
@@ -252,9 +267,9 @@ Terraform runtime iteration remains available on resources and modules:
 resource vm = libvirt.domain("vm", {
   name: each.key,
   memory: each.value.memory,
-}, {
+}) with {
   forEach: machines,
-})
+}
 ```
 
 For a `map<T>`, `each.key` is `string` and `each.value` is `T`. For a set,
@@ -477,19 +492,19 @@ always literal. Terraform function calls such as `merge`, `concat`, and
 
 ## Resource and module metadata
 
-The resource call contains a provider handle, provider resource kind, explicit
-Terraform label, argument object, and optional Terraform meta-argument object:
+The resource declaration contains a provider handle, provider resource kind,
+explicit Terraform label, argument object, and optional `with` clause:
 
 ```infra
 resource vm = libvirt.domain("vm", {
   name: "worker-1",
-}, {
+}) with {
   dependsOn: [rootImage],
   lifecycle: {
     preventDestroy: true,
     ignoreChanges: [address("devices.consoles[0].source.pty.path")],
   },
-})
+}
 ```
 
 Supported metadata includes `count`, `forEach`, `dependsOn`, `lifecycle`, and

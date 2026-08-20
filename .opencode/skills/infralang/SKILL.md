@@ -73,10 +73,10 @@ data zones = aws.availabilityZones("available", {
 resource bucket = aws.s3Bucket("application", {
   bucket: name,
   tags: { "Name": name },
-}, {
+}) with {
   dependsOn: [],
   lifecycle: { preventDestroy: true },
-})
+}
 
 module child = Child("child", {
   region,
@@ -252,19 +252,19 @@ Operator precedence from lowest to highest is conditional, `??`, `||`, `&&`, equ
 
 ## Resources And Runtime Iteration
 
-Resource metadata includes `count`, `forEach`, `dependsOn`, `lifecycle`, and other Terraform resource meta-arguments:
+Resource `with` clauses include `count`, `forEach`, `dependsOn`, `lifecycle`, and other Terraform resource meta-arguments:
 
 ```infra
 resource vm = libvirt.domain("vm", {
   name: each.key,
   memory: each.value.memory,
-}, {
+}) with {
   forEach: machines,
   dependsOn: [network],
   lifecycle: {
     ignoreChanges: [address("devices.consoles[0].source.pty.path")],
   },
-})
+}
 ```
 
 The compiler provides typed `each.key` and `each.value` inside both resource and module declarations with `forEach`. For `map<T>`, the key is `string` and the value is `T`. Runtime `forEach` accepts `set<string>`, where both fields are `string`; other set element types are rejected. `each` is unavailable outside such a declaration and while evaluating its own `forEach` expression. `count.index` scope is not currently installed.

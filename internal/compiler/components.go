@@ -517,7 +517,7 @@ func substituteComponentDeclaration(declaration syntax.Declaration, arguments, p
 		}
 		result.LabelExpression = substitute(value.LabelExpression)
 		result.Arguments = substituteComponentObject(value.Arguments, arguments, providers, renames, nil, expansion)
-		result.MetaArguments = substituteComponentObject(value.MetaArguments, arguments, providers, renames, nil, expansion)
+		result.With = substituteComponentObject(value.With, arguments, providers, renames, nil, expansion)
 		result.Condition = substitute(value.Condition)
 		return &result
 	case *syntax.DataDeclaration:
@@ -682,7 +682,7 @@ func (expander *componentExpander) rewriteDeclaration(declaration syntax.Declara
 		value.ProviderConfig = expander.rewriteExpression(value.ProviderConfig)
 		value.LabelExpression = expander.rewriteExpression(value.LabelExpression)
 		value.Arguments = expander.rewriteObject(value.Arguments)
-		value.MetaArguments = expander.rewriteObject(value.MetaArguments)
+		value.With = expander.rewriteObject(value.With)
 		value.Condition = expander.rewriteExpression(value.Condition)
 	case *syntax.DataDeclaration:
 		value.ProviderConfig = expander.rewriteExpression(value.ProviderConfig)

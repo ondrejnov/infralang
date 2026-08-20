@@ -341,7 +341,7 @@ func (p *preparer) rewriteDeclaration(declaration syntax.Declaration) {
 		}
 		value.LabelExpression = p.rewriteExpression(value.LabelExpression)
 		value.Arguments = p.rewriteObject(value.Arguments)
-		value.MetaArguments = p.rewriteObject(value.MetaArguments)
+		value.With = p.rewriteObject(value.With)
 		value.Condition = p.rewriteExpression(value.Condition)
 	case *syntax.DataDeclaration:
 		value.ProviderConfig = p.rewriteExpression(value.ProviderConfig)
@@ -588,7 +588,7 @@ func cloneDeclaration(declaration syntax.Declaration, environment *staticEnv, ex
 		result.ProviderConfig = cloneExpression(value.ProviderConfig, environment, expansion)
 		result.LabelExpression = cloneExpression(value.LabelExpression, environment, expansion)
 		result.Arguments = cloneObject(value.Arguments, environment, expansion)
-		result.MetaArguments = cloneObject(value.MetaArguments, environment, expansion)
+		result.With = cloneObject(value.With, environment, expansion)
 		result.Condition = cloneExpression(value.Condition, environment, expansion)
 		return &result
 	case *syntax.DataDeclaration:

@@ -40,6 +40,7 @@ type symbol struct {
 	Provider       string
 	TerraformKind  string
 	Fields         map[string]*symbol
+	Expression     syntax.Expression
 }
 
 func (item *symbol) location() Location {
@@ -53,6 +54,7 @@ type schemaContext struct {
 	TerraformKind  string
 	Data           bool
 	Provider       bool
+	ResourceMeta   bool
 }
 
 type moduleContext struct {
@@ -298,6 +300,7 @@ func indexDeclarations(index *fileIndex, declarations []syntax.Declaration, cont
 		case *syntax.ConstDeclaration:
 			item = newSymbol(index, value.Name, symbolKindConstant, "const", typeDetail(value.Type), value, container)
 			item.Fields = fieldsFromExpression(index, value.Value, item.Name)
+			item.Expression = value.Value
 		case *syntax.StaticForDeclaration:
 			loopContainer := "static for " + value.ValueVariable
 			if container != "" {
@@ -339,6 +342,7 @@ func indexDeclarations(index *fileIndex, declarations []syntax.Declaration, cont
 		case *syntax.LetDeclaration:
 			item = newSymbol(index, value.Name, symbolKindVariable, "let", "local value", value, container)
 			item.Fields = fieldsFromExpression(index, value.Value, item.Name)
+			item.Expression = value.Value
 		case *syntax.ConfigureDeclaration:
 			item = newSymbol(index, value.Name, symbolKindObject, "providerConfig", "provider configuration "+value.ProviderName, value, container)
 			item.Target = value.ProviderName
@@ -349,6 +353,9 @@ func indexDeclarations(index *fileIndex, declarations []syntax.Declaration, cont
 			item = newSymbol(index, value.Name, symbolKindObject, "resource", "resource "+value.ProviderConfigName+"."+value.Kind, value, container)
 			item.Provider, item.TerraformKind = value.ProviderConfigName, value.Kind
 			index.Contexts = append(index.Contexts, schemaContext{Span: value.Arguments.GetSpan(), Arguments: value.Arguments, ProviderConfig: value.ProviderConfigName, TerraformKind: value.Kind})
+			if value.With != nil {
+				index.Contexts = append(index.Contexts, schemaContext{Span: value.With.GetSpan(), Arguments: value.With, ResourceMeta: true})
+			}
 		case *syntax.DataDeclaration:
 			item = newSymbol(index, value.Name, symbolKindObject, "data", "data "+value.ProviderConfigName+"."+value.Kind, value, container)
 			item.Provider, item.TerraformKind = value.ProviderConfigName, value.Kind

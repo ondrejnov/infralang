@@ -5,33 +5,26 @@ terraform {
 provider Lvm from "github.com/ondrejnov/lvm" version "0.5.0"
 
 # The provider manages logical volumes only. This volume group must already
-# exist on the remote host.
-input remoteHost: string = "10.0.0.2"
-input remoteUser: string = "root"
+# exist on the remote host. SSH settings are defined in ssh.infra.
 input volumeGroup: string = "vg0"
 input volumeName: string = "infralang-data"
-input sizeGiB: number = 10
+input sizeGiB: number = 2
 
 configure lvm = Lvm({
-  ssh: {
-    host: remoteHost,
-    user: remoteUser,
-
-  },
+  ssh,
 })
 
 resource dataVolume = lvm.logicalVolume("data", {
   name: volumeName,
-  size: sizeGiB,
+  size: sizeGiB *2,
   volumeGroup: volumeGroup,
-}, {
+}) with {
   lifecycle: {
-    preventDestroy: true,
-  },
-})
+    preventDestroy: true
+  }
+}
 
 output volumeId = dataVolume.id
 output volumePath = dataVolume.path
 output volumeUuid = dataVolume.uuid
 output actualSizeBytes = dataVolume.actual_size_bytes
-

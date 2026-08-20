@@ -55,3 +55,18 @@ func TestCompileProjectDelegatesLocalValidationAndReturnsNoPartialArtifacts(t *t
 		t.Fatalf("compileProject() diagnostics = %v, want unknown and missing input", diagnostics)
 	}
 }
+
+func TestRunCheckSourceFileIncludesSiblingInfraFiles(t *testing.T) {
+	directory := t.TempDir()
+	mainPath := filepath.Join(directory, "main.infra")
+	if err := os.WriteFile(mainPath, []byte("output value = ssh"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "ssh.infra"), []byte(`input ssh: string = "ok"`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runCheck([]string{mainPath}); err != nil {
+		t.Fatalf("runCheck() error = %v", err)
+	}
+}

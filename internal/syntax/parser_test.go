@@ -12,7 +12,9 @@ import module Child from "./child"
 input name: string = "example"
 let label = f"resource-{name}"
 configure nullEast = Null("east", {})
-resource placeholder = nullEast.resource("placeholder", { triggers: { "Name": label } })
+resource placeholder = nullEast.resource("placeholder", { triggers: { "Name": label } }) with {
+  dependsOn: [],
+}
 data lookup = nullEast.dataSource("lookup", { inputs: { name: label } })
 module child = Child("child", { marker: label }) using { "null.east": nullEast }
 output id = placeholder.id
@@ -31,6 +33,9 @@ output id = placeholder.id
 	}
 	if resource.ProviderConfigName != "nullEast" || resource.Kind != "resource" || resource.Label != "placeholder" {
 		t.Errorf("resource parsed as %#v", resource)
+	}
+	if resource.With == nil {
+		t.Fatal("resource with clause was not parsed")
 	}
 	dataSource, ok := file.Declarations[7].(*DataDeclaration)
 	if !ok {

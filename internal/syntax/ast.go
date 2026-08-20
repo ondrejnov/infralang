@@ -227,7 +227,7 @@ type ResourceDeclaration struct {
 	Label              string
 	LabelExpression    Expression
 	Arguments          *ObjectExpression
-	MetaArguments      *ObjectExpression
+	With               *ObjectExpression
 	Condition          Expression
 }
 

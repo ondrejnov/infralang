@@ -26,6 +26,37 @@ type schemaBlock struct {
 	Fields map[string]schemaField
 }
 
+func resourceMetaSchema() *schemaBlock {
+	return &schemaBlock{Fields: map[string]schemaField{
+		"count": {
+			Name: "count", WireName: "count",
+		},
+		"forEach": {
+			Name: "forEach", WireName: "for_each",
+		},
+		"dependsOn": {
+			Name: "dependsOn", WireName: "depends_on",
+		},
+		"lifecycle": {
+			Name: "lifecycle", WireName: "lifecycle",
+			Block: &schemaBlock{Fields: map[string]schemaField{
+				"createBeforeDestroy": {
+					Name: "createBeforeDestroy", WireName: "create_before_destroy",
+				},
+				"preventDestroy": {
+					Name: "preventDestroy", WireName: "prevent_destroy",
+				},
+				"ignoreChanges": {
+					Name: "ignoreChanges", WireName: "ignore_changes",
+				},
+				"replaceTriggeredBy": {
+					Name: "replaceTriggeredBy", WireName: "replace_triggered_by",
+				},
+			}},
+		},
+	}}
+}
+
 type providerSchema struct {
 	Provider  *schemaBlock
 	Resources map[string]*schemaBlock

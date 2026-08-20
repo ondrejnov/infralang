@@ -614,8 +614,8 @@ func (p *parser) parseResourceDeclaration() Declaration {
 		p.report(name, "resource call must start with a provider configuration handle")
 		return nil
 	}
-	if len(call.Arguments) < 2 || len(call.Arguments) > 3 {
-		p.report(name, "resource call expects label, arguments, and optional meta-arguments")
+	if len(call.Arguments) != 2 {
+		p.report(name, "resource call expects a label and arguments")
 		return nil
 	}
 	labelExpression := call.Arguments[0]
@@ -625,16 +625,16 @@ func (p *parser) parseResourceDeclaration() Declaration {
 		p.report(name, "resource arguments must be an object")
 		return nil
 	}
-	var meta *ObjectExpression
-	if len(call.Arguments) == 3 {
-		meta, ok = call.Arguments[2].(*ObjectExpression)
-		if !ok {
-			p.report(name, "resource meta-arguments must be an object")
-			return nil
-		}
-	}
+	var with *ObjectExpression
 	var condition Expression
 	end := call.GetSpan().End
+	if p.matchIdentifier("with") {
+		with = p.parseObjectExpression()
+		if with == nil {
+			return nil
+		}
+		end = with.GetSpan().End
+	}
 	if p.matchIdentifier("when") {
 		condition = p.parseExpression()
 		if condition == nil {
@@ -651,7 +651,7 @@ func (p *parser) parseResourceDeclaration() Declaration {
 		Label:              label,
 		LabelExpression:    labelExpression,
 		Arguments:          arguments,
-		MetaArguments:      meta,
+		With:               with,
 		Condition:          condition,
 	}
 }

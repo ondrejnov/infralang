@@ -103,7 +103,6 @@ func TestExamplesCompile(t *testing.T) {
 	paths := []string{
 		"../../examples/aws-s3/main.infra",
 		"../../examples/basic/main.infra",
-		"../../examples/lvm/main.infra",
 		"../../examples/provider-alias/main.infra",
 	}
 	for _, sourcePath := range paths {
@@ -353,12 +352,12 @@ func TestCompileStaticTerraformTraversals(t *testing.T) {
 provider Terraform from "terraform.io/builtin/terraform"
 configure terraform = Terraform
 resource first = terraform.data("first", {})
-resource second = terraform.data("second", {}, {
+resource second = terraform.data("second", {}) with {
   dependsOn: [first],
   lifecycle: {
     ignoreChanges: [address("input.marker")],
   },
-})
+}
 `)
 	var document map[string]any
 	if err := json.Unmarshal(result, &document); err != nil {
@@ -587,7 +586,7 @@ resource optional = terraform.data("optional", {}) when "yes"
 		"cardinality": `
 provider Terraform from "terraform.io/builtin/terraform"
 configure terraform = Terraform
-resource optional = terraform.data("optional", {}, { forEach: {} }) when true
+resource optional = terraform.data("optional", {}) with { forEach: {} } when true
 `,
 		"direct member": `
 provider Terraform from "terraform.io/builtin/terraform"
@@ -990,7 +989,7 @@ configure terraform = Terraform
 input hosts: map<HostConfig> = { first: { hostName: "node" } }
 input names: set<string> = ["one"]
 module child = Child("child", { name: each.value.hostName }) with { forEach: hosts }
-resource item = terraform.data("item", { input: each.key, value: each.value }, { forEach: names })
+resource item = terraform.data("item", { input: each.key, value: each.value }) with { forEach: names }
 `)
 	if !strings.Contains(string(result), `${each.value.host_name}`) || !strings.Contains(string(result), `${each.key}`) {
 		t.Fatalf("typed each lowering:\n%s", result)

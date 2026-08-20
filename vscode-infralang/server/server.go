@@ -344,14 +344,54 @@ func (server *server) resolveMemberPath(directory string, visible map[string]*sy
 	if len(path) == 0 {
 		return nil
 	}
-	current := visible[path[0]]
+	current := server.resolveCompletionSymbol(directory, visible[path[0]], make(map[*symbol]bool))
 	for _, name := range path[1:] {
 		if current == nil {
 			return nil
 		}
+		current = server.resolveCompletionSymbol(directory, current, make(map[*symbol]bool))
 		current = server.members(directory, current)[name]
 	}
 	return current
+}
+
+func (server *server) resolveCompletionSymbol(directory string, root *symbol, seen map[*symbol]bool) *symbol {
+	for root != nil && root.Expression != nil && len(root.Fields) == 0 {
+		if seen[root] {
+			return root
+		}
+		seen[root] = true
+		switch expression := root.Expression.(type) {
+		case *syntax.IdentifierExpression:
+			root = server.visibleSymbols(directory)[expression.Name]
+		case *syntax.IndexExpression:
+			root = server.resolveCompletionExpression(directory, expression.Target, seen)
+		case *syntax.ConditionalExpression:
+			root = server.resolveCompletionExpression(directory, expression.Then, seen)
+			if root == nil {
+				root = server.resolveCompletionExpression(directory, expression.Else, seen)
+			}
+		default:
+			return root
+		}
+	}
+	return root
+}
+
+func (server *server) resolveCompletionExpression(directory string, expression syntax.Expression, seen map[*symbol]bool) *symbol {
+	switch value := expression.(type) {
+	case *syntax.IdentifierExpression:
+		return server.resolveCompletionSymbol(directory, server.visibleSymbols(directory)[value.Name], seen)
+	case *syntax.IndexExpression:
+		return server.resolveCompletionExpression(directory, value.Target, seen)
+	case *syntax.ConditionalExpression:
+		if root := server.resolveCompletionExpression(directory, value.Then, seen); root != nil {
+			return root
+		}
+		return server.resolveCompletionExpression(directory, value.Else, seen)
+	default:
+		return nil
+	}
 }
 
 func (server *server) completions(params TextDocumentPositionParams) []CompletionItem {
@@ -367,6 +407,7 @@ func (server *server) completions(params TextDocumentPositionParams) []Completio
 		if root == nil {
 			return []CompletionItem{}
 		}
+		root = server.resolveCompletionSymbol(directory, root, make(map[*symbol]bool))
 		if root.Category == "providerConfig" {
 			return server.providerMethodCompletions(directory, root, declarationKindAt(source, offset))
 		}
@@ -486,6 +527,10 @@ func (server *server) schemaArgumentCompletions(directory string, context schema
 	if completionFollowsColon(sourceText, offset) {
 		return nil, false
 	}
+	if context.ResourceMeta {
+		selected, keyContext := schemaBlockAt(context.Arguments, resourceMetaSchema(), offset)
+		return schemaCompletionItems(selected, true), keyContext
+	}
 	config := server.visibleSymbols(directory)[context.ProviderConfig]
 	if config == nil {
 		return nil, false
@@ -597,7 +642,12 @@ func (server *server) symbolAt(params TextDocumentPositionParams) (*symbol, stri
 }
 
 func (server *server) definition(params TextDocumentPositionParams) []Location {
-	item, path, _, ok := server.symbolAt(params)
+	item, path, offset, ok := server.symbolAt(params)
+	if path != "" {
+		if location := server.moduleImportDefinition(path, offset); location != nil {
+			return []Location{*location}
+		}
+	}
 	if !ok || item == nil {
 		return []Location{}
 	}
@@ -620,6 +670,26 @@ func (server *server) definition(params TextDocumentPositionParams) []Location {
 	}
 	_ = path
 	return []Location{item.location()}
+}
+
+func (server *server) moduleImportDefinition(path string, offset int) *Location {
+	index := server.workspace.file(path)
+	if index == nil || index.File == nil {
+		return nil
+	}
+	for _, declaration := range index.File.Declarations {
+		imported, ok := declaration.(*syntax.ModuleImportDeclaration)
+		if !ok || !spanContains(imported.GetSpan(), offset) || !strings.HasPrefix(imported.Source, ".") {
+			continue
+		}
+		target := filepath.Clean(filepath.Join(filepath.Dir(path), imported.Source))
+		files := server.workspace.directoryFiles(target)
+		if len(files) == 0 {
+			return nil
+		}
+		return &Location{URI: files[0].URI, Range: Range{}}
+	}
+	return nil
 }
 
 func (server *server) hover(params TextDocumentPositionParams) any {

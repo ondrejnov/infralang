@@ -20,6 +20,10 @@ type CompileResult struct {
 }
 
 func Compile(root string) (CompileResult, error) {
+	return CompileWithOptions(root, compiler.CompileOptions{})
+}
+
+func CompileWithOptions(root string, baseOptions compiler.CompileOptions) (CompileResult, error) {
 	graph, err := discoverGraph(root)
 	if err != nil {
 		return CompileResult{}, err
@@ -45,10 +49,10 @@ func Compile(root string) (CompileResult, error) {
 		for _, child := range children {
 			collect(child)
 		}
-		options := compiler.CompileOptions{
-			ProjectRoot: graph.root, ModuleID: node.id,
-			LocalModules: localContracts(node, result.Interfaces),
-		}
+		options := baseOptions
+		options.ProjectRoot = graph.root
+		options.ModuleID = node.id
+		options.LocalModules = localContracts(node, result.Interfaces)
 		contract, _ := compiler.CollectInterface(node.file, options)
 		result.Interfaces[node.id] = contract
 		collected[node] = true
@@ -56,10 +60,10 @@ func Compile(root string) (CompileResult, error) {
 	collect(graph.rootNode)
 
 	for _, node := range graph.orderedNodes() {
-		options := compiler.CompileOptions{
-			ProjectRoot: graph.root, ModuleID: node.id,
-			LocalModules: localContracts(node, result.Interfaces),
-		}
+		options := baseOptions
+		options.ProjectRoot = graph.root
+		options.ModuleID = node.id
+		options.LocalModules = localContracts(node, result.Interfaces)
 		data, diagnostics := compiler.CompileWithOptions(node.file, options)
 		result.Diagnostics = append(result.Diagnostics, diagnostics...)
 		if len(diagnostics) == 0 {

@@ -124,6 +124,54 @@ instantiate deployment = Deployment(config: settings)
 	}
 }
 
+func TestDefinitionResolvesLocalModuleImportPath(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "modules", "host", "main.infra")
+	writeTestFile(t, path, `import module LibvirtVm from "../libvirt_vm"
+`)
+	target := filepath.Join(root, "modules", "libvirt_vm", "main.infra")
+	writeTestFile(t, target, "output id = \"value\"\n")
+
+	workspace := newWorkspace()
+	workspace.setRoots([]string{root})
+	if err := workspace.scan(); err != nil {
+		t.Fatalf("scan workspace: %v", err)
+	}
+	server := &server{workspace: workspace}
+	source := workspace.file(path).Source
+	offset := strings.Index(source, "libvirt_vm") + 1
+	locations := server.definition(TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: pathToURI(path)},
+		Position:     positionAt(source, offset),
+	})
+	if len(locations) != 1 || locations[0].URI != pathToURI(target) {
+		t.Fatalf("local module import definition = %#v, want %q", locations, pathToURI(target))
+	}
+}
+
+func TestDefinitionDoesNotResolveRemoteModuleImportPathAsFile(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "main.infra")
+	writeTestFile(t, path, `import module LibvirtVm from "registry.example/libvirt_vm"
+`)
+
+	workspace := newWorkspace()
+	workspace.setRoots([]string{root})
+	if err := workspace.scan(); err != nil {
+		t.Fatalf("scan workspace: %v", err)
+	}
+	server := &server{workspace: workspace}
+	source := workspace.file(path).Source
+	offset := strings.Index(source, "libvirt_vm") + 1
+	locations := server.definition(TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: pathToURI(path)},
+		Position:     positionAt(source, offset),
+	})
+	if len(locations) != 0 {
+		t.Fatalf("remote module import path definition = %#v, want no locations", locations)
+	}
+}
+
 func TestCompletionUsesOverlayAndStructuralMembers(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "main.infra")
@@ -334,6 +382,17 @@ resource bucket = aws.s3Bucket("bucket", {
 		t.Fatalf("resource result attributes missing from completion: %v", memberLabels)
 	}
 
+	aliasSource := source + "\nlet volume = bucket[0]\noutput volumeId = volume."
+	if _, err := workspace.change(uri, aliasSource, 2); err != nil {
+		t.Fatalf("change aliased resource source: %v", err)
+	}
+	aliasLabels := completionLabels(server.completions(TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: uri}, Position: positionAt(aliasSource, len(aliasSource)),
+	}))
+	if !aliasLabels["id"] || !aliasLabels["bucketPrefix"] {
+		t.Fatalf("indexed resource alias completion = %v", aliasLabels)
+	}
+
 	configSource := `
 provider AWS from "hashicorp/aws"
 configure aws = AWS({
@@ -400,6 +459,52 @@ configure aws = AWS({
 	}))
 	if !colonLabels["remoteHost"] || colonLabels["host"] || colonLabels["user"] {
 		t.Fatalf("provider completions immediately after colon = %v", colonLabels)
+	}
+}
+
+func TestResourceMetaArgumentCompletions(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "main.infra")
+	source := `provider AWS from "hashicorp/aws"
+configure aws = AWS({})
+resource bucket = aws.s3Bucket("bucket", {})
+resource volume = aws.ebsVolume("volume", {
+}) with {
+  
+}
+`
+	workspace := newWorkspace()
+	workspace.setRoots([]string{root})
+	uri := pathToURI(path)
+	if _, err := workspace.open(uri, source, 1); err != nil {
+		t.Fatalf("open document: %v", err)
+	}
+	server := &server{workspace: workspace}
+	metaOffset := strings.Index(source, "  \n}") + 2
+	labels := completionLabels(server.completions(TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: uri}, Position: positionAt(source, metaOffset),
+	}))
+	for _, label := range []string{"count", "dependsOn", "forEach", "lifecycle"} {
+		if !labels[label] {
+			t.Fatalf("resource meta-argument %q missing: %v", label, labels)
+		}
+	}
+	if labels["bucket"] {
+		t.Fatalf("resource argument leaked into meta-arguments: %v", labels)
+	}
+
+	lifecycleSource := source[:strings.Index(source, "  \n}")-1] + "  lifecycle: {\n    \n  },\n}\n"
+	if _, err := workspace.change(uri, lifecycleSource, 2); err != nil {
+		t.Fatalf("change document: %v", err)
+	}
+	lifecycleOffset := strings.Index(lifecycleSource, "    \n") + 4
+	lifecycleLabels := completionLabels(server.completions(TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: uri}, Position: positionAt(lifecycleSource, lifecycleOffset),
+	}))
+	for _, label := range []string{"createBeforeDestroy", "ignoreChanges", "preventDestroy", "replaceTriggeredBy"} {
+		if !lifecycleLabels[label] {
+			t.Fatalf("lifecycle argument %q missing: %v", label, lifecycleLabels)
+		}
 	}
 }
 

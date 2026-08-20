@@ -572,7 +572,7 @@ func (c *compiler) compileProviderConfig(declaration *syntax.ConfigureDeclaratio
 	if declaration.Inherited {
 		return
 	}
-	config := c.encodeBlockBody(declaration.Config)
+	config := c.encodeProviderConfigBody(declaration.Config, providerConfig.provider)
 	if providerConfig.alias != "" {
 		config["alias"] = providerConfig.alias
 	}
@@ -672,7 +672,7 @@ func (c *compiler) compileResource(declaration *syntax.ResourceDeclaration) {
 	}
 
 	previousScope := c.scope
-	if field, ok := objectField(declaration.MetaArguments, "forEach", "for_each"); ok {
+	if field, ok := objectField(declaration.With, "forEach", "for_each"); ok {
 		collectionType := c.checkExpression(field.Value)
 		keyType, itemType, valid := eachTypes(collectionType)
 		if !valid && collectionType.kind != valueDynamic {
@@ -690,9 +690,9 @@ func (c *compiler) compileResource(declaration *syntax.ResourceDeclaration) {
 		}
 		body["count"] = "${" + c.renderExpression(declaration.Condition) + " ? 1 : 0}"
 	}
-	if declaration.MetaArguments != nil {
-		metadata := c.encodeBlockBody(declaration.MetaArguments)
-		for _, field := range declaration.MetaArguments.Fields {
+	if declaration.With != nil {
+		metadata := c.encodeBlockBody(declaration.With)
+		for _, field := range declaration.With.Fields {
 			key := objectFieldName(field).Wire
 			if !includedObjectField(field) {
 				continue
@@ -705,11 +705,11 @@ func (c *compiler) compileResource(declaration *syntax.ResourceDeclaration) {
 		}
 		for key, value := range metadata {
 			if declaration.Condition != nil && (key == "count" || key == "for_each") {
-				c.addDiagnostic(declaration.MetaArguments.GetSpan(), "resource when conflicts with explicit cardinality metadata")
+				c.addDiagnostic(declaration.With.GetSpan(), "resource when conflicts with explicit cardinality metadata")
 				continue
 			}
 			if _, exists := body[key]; exists {
-				c.addDiagnostic(declaration.MetaArguments.GetSpan(), fmt.Sprintf("resource argument %q is defined more than once", key))
+				c.addDiagnostic(declaration.With.GetSpan(), fmt.Sprintf("resource argument %q is defined more than once", key))
 				continue
 			}
 			body[key] = value
@@ -719,8 +719,8 @@ func (c *compiler) compileResource(declaration *syntax.ResourceDeclaration) {
 		body["provider"] = providerConfig.provider.localName + "." + providerConfig.alias
 	}
 	c.checkExpression(declaration.Arguments)
-	if declaration.MetaArguments != nil {
-		c.checkExpression(declaration.MetaArguments)
+	if declaration.With != nil {
+		c.checkExpression(declaration.With)
 	}
 	c.resources[terraformType][declaration.Label] = body
 }
@@ -1610,6 +1610,89 @@ func (c *compiler) encodeBlockBody(expression *syntax.ObjectExpression) map[stri
 				result[field.name.Wire] = "${" + c.renderFieldAccess(item.Value, field.name) + "}"
 			}
 		}
+	}
+	return result
+}
+
+func (c *compiler) encodeProviderConfigBody(expression *syntax.ObjectExpression, provider *providerInfo) map[string]any {
+	result := make(map[string]any)
+	for _, item := range objectItems(expression) {
+		switch item := item.(type) {
+		case syntax.ObjectField:
+			if item.Condition != nil {
+				conditionType := c.checkExpression(item.Condition)
+				if !isBoolOrDynamic(conditionType) {
+					continue
+				}
+				condition, constant := literalBool(item.Condition)
+				if !constant {
+					c.addDiagnostic(item.Condition.GetSpan(), "Terraform block fields must be statically known")
+					continue
+				}
+				if !condition {
+					continue
+				}
+			}
+			key := objectFieldName(item).Wire
+			valueType := c.checkExpression(item.Value)
+			if schema, ok := c.providerSchema(provider); ok {
+				block, isBlock := schema.BlockTypes[key]
+				if isBlock && block.NestingMode != "" && valueType.kind == valueObject {
+					result[key] = []any{c.encodeObjectAsBlock(item.Value, valueType)}
+					continue
+				}
+			}
+			result[key] = c.encodeExpression(item.Value)
+		case syntax.ObjectSpread:
+			if object, ok := item.Value.(*syntax.ObjectExpression); ok {
+				for key, value := range c.encodeProviderConfigBody(object, provider) {
+					result[key] = value
+				}
+				continue
+			}
+			spreadType := c.checkExpression(item.Value)
+			fixed := spreadType.kind == valueObject && !spreadType.open
+			if fixed {
+				for _, field := range spreadType.fields {
+					if field.conditional {
+						fixed = false
+						break
+					}
+				}
+			}
+			if !fixed {
+				if spreadType.kind == valueMap || spreadType.kind == valueDynamic || spreadType.open {
+					c.addDiagnostic(item.GetSpan(), "Terraform block spread must have a statically known object shape")
+				} else if spreadType.kind == valueObject {
+					c.addDiagnostic(item.GetSpan(), "Terraform block spread cannot contain runtime conditional fields")
+				}
+				continue
+			}
+			for _, field := range spreadType.fields {
+				result[field.name.Wire] = "${" + c.renderFieldAccess(item.Value, field.name) + "}"
+			}
+		}
+	}
+	return result
+}
+
+func (c *compiler) providerSchema(provider *providerInfo) (ProviderSchema, bool) {
+	if schema, ok := c.options.ProviderSchemas[provider.source]; ok {
+		return schema, true
+	}
+	for source, schema := range c.options.ProviderSchemas {
+		normalized := strings.TrimPrefix(source, "registry.terraform.io/")
+		if normalized == provider.source || strings.HasSuffix(normalized, "/"+provider.source) {
+			return schema, true
+		}
+	}
+	return ProviderSchema{}, false
+}
+
+func (c *compiler) encodeObjectAsBlock(expression syntax.Expression, typeInfo valueType) map[string]any {
+	result := make(map[string]any, len(typeInfo.fields))
+	for _, field := range typeInfo.fields {
+		result[field.name.Wire] = "${" + c.renderFieldAccess(expression, field.name) + "}"
 	}
 	return result
 }

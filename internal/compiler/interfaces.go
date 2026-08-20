@@ -7,9 +7,20 @@ import (
 )
 
 type CompileOptions struct {
-	ProjectRoot  string
-	ModuleID     string
-	LocalModules map[string]ModuleInterface
+	ProjectRoot     string
+	ModuleID        string
+	LocalModules    map[string]ModuleInterface
+	ProviderSchemas ProviderSchemas
+}
+
+type ProviderSchemas map[string]ProviderSchema
+
+type ProviderSchema struct {
+	BlockTypes map[string]ProviderBlockSchema
+}
+
+type ProviderBlockSchema struct {
+	NestingMode string
 }
 
 type ModuleInterface struct {

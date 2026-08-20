@@ -161,9 +161,9 @@ resource dataDiskResize = terraform.data("data_disk_resize", {
       inline: [f"virsh blockresize {jsonencode(hostname)} vdb {jsonencode(f\"{dataDiskSizeGib}G\")}"],
     },
   }],
-}, {
+}) with {
   dependsOn: [vm],
-}) when dataDiskSizeGib != null
+} when dataDiskSizeGib != null
 
 resource rootImage = terraform.data("root_image", {
   triggersReplace: [rootVolume.uuid],
@@ -258,12 +258,12 @@ resource vm = libvirt.domain("vm", {
       source: { bridge: { bridge: commonConfig.bridge } },
     }],
   },
-}, {
+}) with {
   dependsOn: [rootImage],
   lifecycle: {
     ignoreChanges: [address("devices.consoles[0].source.pty.path")],
   },
-})
+}
 
 output hostname = vm.name with { description: "Created libvirt domain name." }
 output ip_address = ipAddress with { description: "Configured static guest IP address." }

@@ -1,0 +1,12 @@
+type SshConfig = object {
+  host: string,
+  user: string,
+  port?: number,
+  identityFile?: string,
+  knownHostsFile?: string,
+}
+
+input ssh: SshConfig = {
+  host: "10.0.0.2",
+  user: "root",
+}
