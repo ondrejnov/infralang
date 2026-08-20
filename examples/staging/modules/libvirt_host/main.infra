@@ -43,18 +43,9 @@ resource cloudinitPool = libvirt.pool("cloudinit", {
 })
 
 module vmModule = LibvirtVm("vm", {
-  adoptExisting: each.value.adoptExisting,
+  ...inputs(each.value),
   commonConfig,
-  cpuMode: each.value.cpuMode,
-  dataDiskSizeGib: each.value.dataDiskSizeGib,
-  diskSizeGib: each.value.diskSizeGib,
   hostname: each.key,
-  ipAddress: each.value.ipAddress,
-  qemuGuestAgentEnabled: each.value.qemuGuestAgentEnabled,
-  ramMb: each.value.ramMb,
-  running: each.value.running,
-  serialConsoleEnabled: each.value.serialConsoleEnabled,
-  vcpu: each.value.vcpu,
 }) using { libvirt, lvm } with {
   forEach: vms,
   dependsOn: [network, cloudinitPool],

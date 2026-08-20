@@ -1,7 +1,6 @@
 import type { HostCallConfig, VmConfig } from "./modules/libvirt_host/types.infra"
 
 type HostDefinition = object {
-  moduleLabel: string,
   gateway: string,
   remoteHost: string,
   vms: map<VmConfig>,

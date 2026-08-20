@@ -6,14 +6,26 @@ provider Libvirt from "dmacvicar/libvirt" version "~> 0.9.3"
 provider Lvm from "github.com/ondrejnov/lvm" version "0.5.0"
 import module LibvirtHost from "./modules/libvirt_host"
 
-# The explicit wire alias preserves compatibility with terraform.tfvars while source code uses camelCase.
-input vmDefaults "vm_defaults": VmDefaults with {
+# The explicit wire alias preserves the existing Terraform variable name while source code uses camelCase.
+input vmDefaults "vm_defaults": VmDefaults = {
+  baseImagePath: "/root/debian-13-generic-amd64.raw",
+  bootstrapRoot: "/mnt/doc",
+  bridge: "br10",
+  cloudinitDirectory: "/var/lib/libvirt/images",
+  cloudinitPool: "images",
+  interfaceName: "enp1s0",
+  mtu: 1420,
+  prefixLength: 24,
+  sshAuthorizedKeys: [
+    "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCYKEBxWEQQEX+f04DQ7M6H/ltbWOWzP2jb274gGhDukqKoLqCisi7E15SO3zgBWDnNJ+7Zr5sFQaWr+t+aG8vCJQWJT9rykjy4BZhV6ZMGwvrMFw9/jLO1d+Habv4eFgeN8F/O8ijikE4v31uEp2//nJHOnrRX+YhFet4ON0fyWrGRnP1wYtyIQN1G7IgU/HBjKNsW8C8rO0keYlC3GwJOBEFnoVyZinqpCyOab8kM8gxIopRHBt6SseJANM2lBjOWpevboTmNXbvVMXuxCDugV+PDs4/RPBe9xBGWd0BXcN2G7Th47e1nLeWQQ3ztGR4O7RkvG7qs4F9nGPH0fyXZ",
+  ],
+  volumeGroup: "vg_kvm",
+} with {
   description: "Configuration shared by all libvirt VM module instances.",
 }
 
 const hostDefinitions: map<HostDefinition> = {
   db1: {
-    moduleLabel: "host_db1",
     gateway: "10.0.1.254",
     remoteHost: "10.0.0.84",
     vms: {
@@ -32,7 +44,6 @@ const hostDefinitions: map<HostDefinition> = {
     },
   },
   db2: {
-    moduleLabel: "host_db2",
     gateway: "10.0.2.254",
     remoteHost: "10.0.0.85",
     vms: {
@@ -51,6 +62,9 @@ const hostDefinitions: map<HostDefinition> = {
     },
   },
 }
+
+const networkName = "staging"
+const kubernetesHosts: list<string> = ["kube", "node1", "node2"]
 
 component HostDeployment(label: string, config: HostCallConfig) using {
   libvirt: Libvirt,
@@ -75,14 +89,14 @@ static for key, host in hostDefinitions {
   })
 
   instantiate hostModules[key] = HostDeployment(
-    label: host.moduleLabel,
+    label: f"host_{key}",
     config: {
       commonConfig: {
         ...vmDefaults,
         gateway: host.gateway,
         remoteHost: host.remoteHost,
       },
-      networkName: "staging",
+      networkName,
       vms: host.vms,
     },
   ) using {
@@ -93,10 +107,10 @@ static for key, host in hostDefinitions {
 
 output db1 = hostModules["db1"].vms["db1"] with { description: "Created db1 VM details." }
 output db2 = hostModules["db2"].vms["db2"] with { description: "Created db2 VM details." }
-output kubernetes = {for hostname in ["kube", "node1", "node2"]: hostname => hostModules["db1"].vms[hostname]} with {
+output kubernetes = {for hostname in kubernetesHosts: hostname => hostModules["db1"].vms[hostname]} with {
   description: "Created Kubernetes VM details.",
 }
-output kubernetes2 = {for hostname in ["kube", "node1", "node2"]: hostname => hostModules["db2"].vms[hostname]} with {
+output kubernetes2 = {for hostname in kubernetesHosts: hostname => hostModules["db2"].vms[hostname]} with {
   description: "Created Kubernetes VM details.",
 }
 output nfs = hostModules["db1"].vms["nfs"] with { description: "Created NFS VM details." }
@@ -105,3 +119,20 @@ output postgresql = {
   pg1: hostModules["db1"].vms["pg1"],
   pg2: hostModules["db2"].vms["pg2"],
 } with { description: "Created PostgreSQL VM details." }
+
+moved {
+  `libvirt_network.staging` -> `module.host_db1.libvirt_network.main`,
+  `libvirt_network.staging_db2` -> `module.host_db2.libvirt_network.main`,
+  `libvirt_pool.cloudinit` -> `module.host_db1.libvirt_pool.cloudinit`,
+  `libvirt_pool.cloudinit_db2` -> `module.host_db2.libvirt_pool.cloudinit`,
+  `module.db1` -> `module.host_db1.module.vm["db1"]`,
+  `module.db2` -> `module.host_db2.module.vm["db2"]`,
+  `module.kubernetes["kube"]` -> `module.host_db1.module.vm["kube"]`,
+  `module.kubernetes["node1"]` -> `module.host_db1.module.vm["node1"]`,
+  `module.kubernetes["node2"]` -> `module.host_db1.module.vm["node2"]`,
+  `module.kubernetes2["kube"]` -> `module.host_db2.module.vm["kube"]`,
+  `module.kubernetes2["node1"]` -> `module.host_db2.module.vm["node1"]`,
+  `module.kubernetes2["node2"]` -> `module.host_db2.module.vm["node2"]`,
+  `module.nfs` -> `module.host_db1.module.vm["nfs"]`,
+  `module.nfs2` -> `module.host_db2.module.vm["nfs2"]`,
+}

@@ -166,6 +166,45 @@ output first = first.output
 	}
 }
 
+func TestCompileConnectionObjectAsTerraformBlock(t *testing.T) {
+	t.Parallel()
+
+	result := compileSource(t, `
+provider Terraform from "terraform.io/builtin/terraform"
+configure terraform = Terraform({})
+input host: string = "example"
+let sshConnection = {
+  type: "ssh",
+  host: host,
+  user: "root",
+}
+resource resize = terraform.data("resize", {
+  connection: sshConnection,
+  provisioner: [{
+    "remote-exec": {
+      inline: ["true"],
+    },
+  }],
+})
+`)
+
+	var document map[string]any
+	if err := json.Unmarshal(result, &document); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	resource := document["resource"].(map[string]any)["terraform_data"].(map[string]any)["resize"].(map[string]any)
+	connection, ok := resource["connection"].(map[string]any)
+	if !ok {
+		t.Fatalf("connection = %#v, want JSON object", resource["connection"])
+	}
+	if connection["host"] != "${local.sshConnection.host}" {
+		t.Errorf("connection host = %#v", connection["host"])
+	}
+	if connection["user"] != "${local.sshConnection.user}" {
+		t.Errorf("connection user = %#v", connection["user"])
+	}
+}
+
 func TestCompileProviderForwardReferenceUsesTerraformAddress(t *testing.T) {
 	t.Parallel()
 

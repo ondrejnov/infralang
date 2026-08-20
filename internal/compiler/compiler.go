@@ -682,7 +682,7 @@ func (c *compiler) compileResource(declaration *syntax.ResourceDeclaration) {
 		c.scope.bindings["each"] = eachObjectType(keyType, itemType)
 		defer func() { c.scope = previousScope }()
 	}
-	body := c.encodeBlockBody(declaration.Arguments)
+	body := c.encodeResourceBody(declaration.Arguments)
 	if declaration.Condition != nil {
 		conditionType := c.checkExpression(declaration.Condition)
 		if !isBoolOrDynamic(conditionType) {
@@ -1614,6 +1614,21 @@ func (c *compiler) encodeBlockBody(expression *syntax.ObjectExpression) map[stri
 	return result
 }
 
+func (c *compiler) encodeResourceBody(expression *syntax.ObjectExpression) map[string]any {
+	result := c.encodeBlockBody(expression)
+	for _, item := range objectItems(expression) {
+		field, ok := item.(syntax.ObjectField)
+		if !ok || !includedObjectField(field) || objectFieldName(field).Wire != "connection" {
+			continue
+		}
+		valueType := c.checkExpression(field.Value)
+		if valueType.kind == valueObject && !valueType.open {
+			result["connection"] = c.encodeObjectAsBlock(field.Value, valueType)
+		}
+	}
+	return result
+}
+
 func (c *compiler) encodeProviderConfigBody(expression *syntax.ObjectExpression, provider *providerInfo) map[string]any {
 	result := make(map[string]any)
 	for _, item := range objectItems(expression) {
@@ -1690,6 +1705,9 @@ func (c *compiler) providerSchema(provider *providerInfo) (ProviderSchema, bool)
 }
 
 func (c *compiler) encodeObjectAsBlock(expression syntax.Expression, typeInfo valueType) map[string]any {
+	if object, ok := expression.(*syntax.ObjectExpression); ok {
+		return c.encodeBlockBody(object)
+	}
 	result := make(map[string]any, len(typeInfo.fields))
 	for _, field := range typeInfo.fields {
 		result[field.name.Wire] = "${" + c.renderFieldAccess(expression, field.name) + "}"

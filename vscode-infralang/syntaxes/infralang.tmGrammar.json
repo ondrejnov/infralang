@@ -140,6 +140,7 @@
       },
       "patterns": [
         { "include": "#balanced-braces" },
+        { "include": "#escapes" },
         { "include": "#expression" }
       ]
     },
@@ -154,6 +155,7 @@
       },
       "patterns": [
         { "include": "#balanced-braces" },
+        { "include": "#escapes" },
         { "include": "#expression" }
       ]
     },

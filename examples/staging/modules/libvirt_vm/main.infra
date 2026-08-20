@@ -118,7 +118,7 @@ let cloudConfig = {
     name: "root",
     sshAuthorizedKeys: commonConfig.sshAuthorizedKeys,
   }],
-  write_files: concat([
+  writeFiles: concat([
     {
       path: "/etc/cloud/cloud.cfg.d/99-disable-network-config.cfg",
       content: "network: {config: disabled}\n",
@@ -135,6 +135,14 @@ let cloudConfig = {
   chpasswd: { expire: false } when rootPassword != null,
 }
 
+let sshConnection = {
+  type: "ssh",
+  certificate: file(pathexpand(commonConfig.remoteCertificatePath)),
+  host: commonConfig.remoteHost,
+  privateKey: file(pathexpand(commonConfig.remotePrivateKeyPath)),
+  user: commonConfig.remoteUser,
+}
+
 resource rootVolume = lvm.logicalVolume("root", {
   name: hostname,
   size: diskSizeGib,
@@ -149,13 +157,7 @@ resource dataVolume = lvm.logicalVolume("data", {
 
 resource dataDiskResize = terraform.data("data_disk_resize", {
   triggersReplace: [dataVolume[0].actual_size_bytes],
-  connection: {
-    type: "ssh",
-    certificate: file(pathexpand(commonConfig.remoteCertificatePath)),
-    host: commonConfig.remoteHost,
-    privateKey: file(pathexpand(commonConfig.remotePrivateKeyPath)),
-    user: commonConfig.remoteUser,
-  },
+  connection: sshConnection,
   provisioner: [{
     "remote-exec": {
       inline: [f"virsh blockresize {jsonencode(hostname)} vdb {jsonencode(f\"{dataDiskSizeGib}G\")}"],
@@ -167,13 +169,7 @@ resource dataDiskResize = terraform.data("data_disk_resize", {
 
 resource rootImage = terraform.data("root_image", {
   triggersReplace: [rootVolume.uuid],
-  connection: {
-    type: "ssh",
-    certificate: file(pathexpand(commonConfig.remoteCertificatePath)),
-    host: commonConfig.remoteHost,
-    privateKey: file(pathexpand(commonConfig.remotePrivateKeyPath)),
-    user: commonConfig.remoteUser,
-  },
+  connection: sshConnection,
   provisioner: [{
     "remote-exec": {
       inline: [f"dd if={jsonencode(commonConfig.baseImagePath)} of={jsonencode(rootVolume.path)} bs=4M conv=fsync"],
