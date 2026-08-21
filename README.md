@@ -316,9 +316,7 @@ static for key, environment in environments {
         "Application": "customer-portal",
       },
     },
-  ) using {
-    aws: aws,
-  }
+  ) using { aws }
 }
 
 output developmentBucketId = storage["development"].id
@@ -336,11 +334,17 @@ JSON; the resulting resources retain explicit addresses such as
 ## CLI
 
 ```shell
-bin/infralang check examples/libvirt
-bin/infralang fmt examples/basic/main.infra
-bin/infralang build examples/libvirt
-bin/infralang build -o generated.tf.json examples/basic/main.infra
-bin/infralang version
+infralang check examples/libvirt
+infralang fmt examples/basic/main.infra
+infralang build examples/libvirt
+infralang build -o generated.tf.json examples/basic/main.infra
+infralang version
+
+cd examples/libvirt
+infralang init
+infralang plan
+infralang apply
+infralang destroy
 ```
 
 `check` validates a source file or module directory without writing Terraform
