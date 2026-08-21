@@ -332,8 +332,8 @@ JSON; the resulting resources retain explicit addresses such as
 ## CLI
 
 ```shell
-bin/infralang check examples/staging
-bin/infralang build examples/staging
+bin/infralang check examples/libvirt
+bin/infralang build examples/libvirt
 bin/infralang build -o generated.tf.json examples/basic/main.infra
 bin/infralang version
 ```
@@ -467,9 +467,9 @@ handles does not invent a state move or an automatic label. Changing an
 explicit label or other address-contributing key requires review and, when the
 old state must be retained, an author-supplied `moved` declaration.
 
-## Staging example
+## Libvirt example
 
-`examples/staging` is a complete InfraLang representation of a larger Libvirt
+`examples/libvirt` is a complete InfraLang representation of a larger Libvirt
 staging environment, including both local modules. It demonstrates provider
 aliases, resource labels, module addresses, optional attribute defaults,
 validations, and moved-state declarations. The root uses type imports, exact

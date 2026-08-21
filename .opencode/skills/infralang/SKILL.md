@@ -493,6 +493,6 @@ Add focused tests for syntax, diagnostics, compile-time preparation, structural 
 - Structural types and local interfaces: `internal/compiler/types.go`, `internal/compiler/interfaces.go`
 - Project graph and imports: `internal/project/graph.go`, `internal/project/imports.go`, `internal/project/project.go`
 - CLI and directory artifact writing: `cmd/infralang/main.go`
-- End-to-end typed component example: `examples/staging/`
+- End-to-end typed component example: `examples/libvirt/`
 - Small language example: `examples/basic/main.infra`
 - Provider alias example: `examples/provider-alias/`
