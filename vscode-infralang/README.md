@@ -76,7 +76,6 @@ After `terraform init` or `tofu init`, the language server reads the local `.ter
 
 ## Limitations
 
-- InfraLang and this extension are currently an MVP and should be evaluated before production use.
 - Unsaved diagnostics combine all immediate `.infra` files in the edited directory. Full recursive local-module and type-import project validation still requires `infralang check`.
 - Provider schema completion requires providers already installed for the module and may take a few seconds on first use.
 - Terraform module input completion requires the module to be present in the local initialization manifest.

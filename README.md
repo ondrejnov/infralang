@@ -7,10 +7,6 @@ state, planning, and apply behavior instead of replacing the ecosystem.
 
 [Language reference](docs/language.md) · [Releases](https://github.com/ondrejnov/infralang/releases) · [VS Code extension](vscode-infralang/)
 
-> [!WARNING]
-> InfraLang is an experimental MVP. Use it to explore the language and generate
-> Terraform configuration, but do not use it for production infrastructure yet.
-
 ## Quick start
 
 ### Requirements
@@ -115,10 +111,8 @@ declarations describe intentional state migrations. Teams can therefore move
 one directory at a time while keeping the same backend, state, providers, and
 plan/apply workflow.
 
-InfraLang is currently an MVP, so it should be evaluated rather than adopted
-for production infrastructure today. Provider schemas are still validated by
-Terraform/OpenTofu, and `infralang check` complements rather than replaces
-`terraform validate` and plan review.
+Provider schemas are still validated by Terraform/OpenTofu, and `infralang check`
+complements rather than replaces `terraform validate` and plan review.
 
 ### Syntax comparison
 
