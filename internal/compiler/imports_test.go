@@ -72,7 +72,7 @@ func TestSensitiveTypeMismatchIsRedacted(t *testing.T) {
 	file, parseDiagnostics := syntax.Parse("sensitive.infra", `
 import module Child from "./child"
 input credentials: object { token: string } = { token: "DO_NOT_EXPOSE_SECRET" } with { sensitive: true }
-module child = Child("child", { "requiredValue": credentials.token })
+module child = Child("child", { requiredValue: credentials.token })
 `)
 	if len(parseDiagnostics) != 0 {
 		t.Fatal(parseDiagnostics)
@@ -96,7 +96,7 @@ func TestSensitiveChildOutputRemainsRedactedAcrossInterface(t *testing.T) {
 import module Source from "./source"
 import module Sink from "./sink"
 module source = Source("source", {})
-module sink = Sink("sink", { "requiredValue": source.secret })
+module sink = Sink("sink", { requiredValue: source.secret })
 `)
 	if len(parseDiagnostics) != 0 {
 		t.Fatal(parseDiagnostics)

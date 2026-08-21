@@ -8,11 +8,11 @@ configure libvirt = Libvirt
 configure lvm = Lvm
 configure terraform = Terraform
 
-input adoptExisting "adopt_existing": bool = false with {
+input adoptExisting: bool = false with {
   description: "Adopt an existing VM without copying the base image or replacing its cloud-init ISO.",
 }
 
-input commonConfig "common_config": CommonConfig with {
+input commonConfig: CommonConfig with {
   description: "Configuration shared by VM module instances.",
   validate startswith(commonConfig.baseImagePath, "/") else "common_config.base_image_path must be an absolute path.",
   validate startswith(commonConfig.bootstrapRoot, "/") else "common_config.bootstrap_root must be an absolute path.",
@@ -27,7 +27,7 @@ input commonConfig "common_config": CommonConfig with {
   validate length(commonConfig.sshAuthorizedKeys) > 0 else "common_config.ssh_authorized_keys must contain at least one public SSH key.",
 }
 
-input cpuMode "cpu_mode": optional<string> with {
+input cpuMode: optional<string> with {
   description: "Optional libvirt CPU mode exposed to the guest. Use host-passthrough when nested virtualization is required.",
   nullable: true,
   validations: [{
@@ -36,7 +36,7 @@ input cpuMode "cpu_mode": optional<string> with {
   }],
 }
 
-input dataDiskSizeGib "data_disk_size_gib": optional<number> with {
+input dataDiskSizeGib: optional<number> with {
   description: "Optional data disk capacity in GiB. When null, no data disk is created.",
   nullable: true,
   validations: [{
@@ -45,7 +45,7 @@ input dataDiskSizeGib "data_disk_size_gib": optional<number> with {
   }],
 }
 
-input diskSizeGib "disk_size_gib": number = 10 with {
+input diskSizeGib: number = 10 with {
   description: "Root disk capacity in GiB.",
   validations: [{
     condition: diskSizeGib >= 1 && floor(diskSizeGib) == diskSizeGib,
@@ -58,31 +58,31 @@ input hostname: string with {
   validations: [{ condition: length(trimspace(hostname)) > 0, errorMessage: "hostname must not be empty." }],
 }
 
-input ipAddress "ip_address": string with {
+input ipAddress: string with {
   description: "Static guest IPv4 address without a prefix.",
   validations: [{ condition: can(cidrhost(f"{ipAddress}/32", 0)), errorMessage: "ip_address must be a valid IPv4 address." }],
 }
 
-input qemuGuestAgentEnabled "qemu_guest_agent_enabled": bool = false with {
+input qemuGuestAgentEnabled: bool = false with {
   description: "Install qemu-guest-agent and attach its private virtio channel.",
 }
 
-input ramMb "ram_mb": number = 1024 with {
+input ramMb: number = 1024 with {
   description: "Guest memory in MiB.",
   validations: [{ condition: ramMb >= 256, errorMessage: "ram_mb must be at least 256." }],
 }
 
-input rootPassword "root_password": optional<string> with {
+input rootPassword: optional<string> with {
   description: "Optional root password. SSH password authentication stays disabled when null.",
   nullable: true,
   sensitive: true,
 }
 
-input serialConsoleEnabled "serial_console_enabled": bool = false with {
+input serialConsoleEnabled: bool = false with {
   description: "Reconcile an externally attached PTY serial console for virsh console access.",
 }
 
-input setupFiles "setup_files": list<SetupFile> = [] with {
+input setupFiles: list<SetupFile> = [] with {
   description: "Additional local files written into the guest by cloud-init.",
   validations: [{
     condition: alltrue([for item in setupFiles: startswith(item.source, "/") && startswith(item.destination, "/")]),

@@ -389,20 +389,21 @@ components are statically selected handles, not Terraform `for_each` objects.
 
 ## Source and wire migration
 
-InfraLang source names and Terraform wire names are separate. A legacy
-top-level input keeps its exact spelling, while an explicit alias enables
-camelCase source code without changing existing Terraform variables:
+InfraLang source names and Terraform wire names are separate. Top-level input
+names automatically become snake_case wire names, while an explicit alias
+preserves a deliberate or legacy Terraform variable name:
 
 ```infra
-input imageId "image_id": string
+input imageId: string
 type Config = object { imageId "image_id": string }
 ```
 
-Unquoted object fields use camelCase source members and snake_case wire keys in
+Unquoted input and object fields use camelCase source members and snake_case wire keys in
 every context. Quoted fields preserve the exact wire key and are accessed by
 string index. This is a breaking correction from older context-dependent key
-conversion. To preserve an existing exact camelCase wire key, quote it as
-`"imageId"` or declare an explicit structural alias such as
+conversion. To preserve an existing exact camelCase input wire key, declare an
+explicit alias such as `input imageId "imageId": string`. For object literals,
+quote the key as `"imageId"` or declare an explicit structural alias such as
 `imageId "imageId": string`.
 
 ## Boundaries and identity

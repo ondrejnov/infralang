@@ -198,8 +198,8 @@ func (c *compiler) collectDeclarations() {
 			}
 			c.inputSources[value.Name] = value
 			wire := value.WireName
-			if wire == "" {
-				wire = value.Name
+			if wire == "" || !value.ExplicitWire {
+				wire = syntax.SourceNameToWire(value.Name)
 			}
 			if previous, exists := c.inputWires[wire]; exists {
 				c.addDiagnostic(previous.GetSpan(), fmt.Sprintf("input wire name %q conflicts with another input", wire))
@@ -213,7 +213,7 @@ func (c *compiler) collectDeclarations() {
 				if value.ExplicitWire {
 					input.name = aliasedInputName(value.Name, wire)
 				} else {
-					input.name = legacyInputName(value.Name)
+					input.name = unaliasedInputName(value.Name)
 				}
 			}
 		case *syntax.TypeAliasDeclaration:
@@ -645,7 +645,7 @@ func (c *compiler) managedType(providerConfigName, kind string, span syntax.Span
 	}
 	localName := providerSymbol.providerConfig.provider.localName
 	terraformType := toSnakeCase(kind)
-	if !strings.HasPrefix(terraformType, localName+"_") {
+	if terraformType != localName && !strings.HasPrefix(terraformType, localName+"_") {
 		terraformType = localName + "_" + terraformType
 	}
 	if !syntax.IsTerraformIdentifier(terraformType) {

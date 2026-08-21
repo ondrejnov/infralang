@@ -411,7 +411,7 @@ func (p *parser) parseProviderDeclaration() Declaration {
 func (p *parser) parseInputDeclaration() Declaration {
 	start := p.advance().Span.Start
 	name := p.expect(TokenIdentifier, "expected input name")
-	wireName := name.Lexeme
+	wireName := SourceNameToWire(name.Lexeme)
 	explicitWire := false
 	if p.check(TokenString) {
 		wire := p.advance()

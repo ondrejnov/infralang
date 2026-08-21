@@ -8,11 +8,11 @@ import module LibvirtVm from "../libvirt_vm"
 configure libvirt = Libvirt
 configure lvm = Lvm
 
-input commonConfig "common_config": CommonConfig with {
+input commonConfig: CommonConfig with {
   description: "Configuration shared by all VMs on this libvirt host.",
 }
 
-input networkName "network_name": string with {
+input networkName: string with {
   description: "Name of the routed libvirt network.",
   validate length(trimspace(networkName)) > 0 else "network_name must not be empty.",
 }

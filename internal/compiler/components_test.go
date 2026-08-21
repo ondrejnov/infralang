@@ -59,7 +59,7 @@ output result = wrapper.result
 		t.Fatal(err)
 	}
 	module := document["module"].(map[string]any)["stable_child"].(map[string]any)
-	if module["value"] != `${var.runtimeValue}` {
+	if module["value"] != `${var.runtime_value}` {
 		t.Fatalf("runtime component argument = %#v", module)
 	}
 	if document["output"].(map[string]any)["result"].(map[string]any)["value"] != `${module.stable_child.result}` {

@@ -9,8 +9,8 @@ type BindingName struct {
 	Quoted       bool
 }
 
-func legacyInputName(source string) BindingName {
-	return BindingName{Source: source, Wire: source}
+func unaliasedInputName(source string) BindingName {
+	return BindingName{Source: source, Wire: syntax.SourceNameToWire(source)}
 }
 
 func aliasedInputName(source, wire string) BindingName {

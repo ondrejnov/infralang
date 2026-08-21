@@ -121,14 +121,14 @@ Declaration rules:
 
 InfraLang distinguishes source identifiers used in expressions from names emitted to Terraform.
 
-An unaliased top-level input preserves its exact identifier as both names. Use a quoted alias when they differ:
+An unaliased top-level input preserves its source identifier in expressions and automatically converts it to snake_case on the Terraform wire. Use a quoted alias only when the wire name must be deliberate or legacy:
 
 ```infra
 input imageId "image_id": string
 let selected = imageId
 ```
 
-The source identifier is `imageId`; the Terraform variable is `image_id`. Adding or changing an input alias changes the Terraform interface.
+The source identifier is `imageId`; the Terraform variable is `image_id`. The alias is optional here, so `input imageId: string` is equivalent. Adding or changing an input wire name changes the Terraform interface.
 
 In every object context, an unquoted key has an identifier-style source name and a snake_case wire name. Quoted keys preserve their exact wire spelling and are accessed by string index. Structural object fields may declare an explicit wire alias:
 
@@ -478,7 +478,7 @@ Add focused tests for syntax, diagnostics, compile-time preparation, structural 
 - Defaults may use compile-time constants, but never runtime references or function calls.
 - Preserve explicit resource, data, and module labels unless state identity should change.
 - Use `moved` when an intentional address change must preserve state.
-- Quote arbitrary map keys; all unquoted object keys are recursively converted to snake_case wire keys.
+- Quote arbitrary map keys; all unquoted input and object keys are recursively converted to snake_case wire keys.
 - Compile-time evaluator and control expressions cannot read files or environment variables, execute commands, access networks, query providers or state, or call Terraform functions. Ordinary runtime expressions inside components and expanded declarations may describe Terraform functions such as `file()`, but InfraLang does not execute them.
 - Keep unsupported roadmap syntax out of `.infra`: there are no user-defined runtime functions, formatter directives, language server features, native Terraform tests, or provider-schema-generated types.
 

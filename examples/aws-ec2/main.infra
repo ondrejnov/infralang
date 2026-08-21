@@ -1,0 +1,67 @@
+terraform {
+  requiredVersion: ">= 1.5.0",
+}
+
+provider AWS from "hashicorp/aws" version "~> 6.0"
+
+input region: string = "eu-central-1"
+input amiId: string with {
+  description: "AMI ID available in the selected region.",
+}
+input instanceType: string = "t3.micro"
+input subnetId: string with {
+  description: "Existing subnet where the EC2 instance will be created.",
+}
+input securityGroupIds: list<string> with {
+  description: "Existing security groups attached to the instance.",
+}
+input keyName: optional<string> with {
+  description: "Optional existing EC2 key pair used for SSH access.",
+  nullable: true,
+}
+input environment: string = "development"
+input volumeSizeGib: number = 20 with {
+  description: "Size of the additional EBS volume in GiB.",
+}
+input volumeDeviceName: string = "/dev/sdf" with {
+  description: "Device name used when attaching the additional EBS volume.",
+}
+
+configure aws = AWS({ region })
+
+resource instance = aws.instance("example", {
+  ami: amiId,
+  instanceType,
+  subnetId,
+  vpcSecurityGroupIds: securityGroupIds,
+  keyName,
+  associatePublicIpAddress: true,
+  tags: {
+    "Name": f"infralang-ec2-{environment}",
+    "Environment": environment,
+    "ManagedBy": "InfraLang",
+  },
+})
+
+resource volume = aws.ebsVolume("example", {
+  availabilityZone: instance.availability_zone,
+  size: volumeSizeGib,
+  type: "gp3",
+  tags: {
+    "Name": f"infralang-ec2-{environment}-data",
+    "Environment": environment,
+    "ManagedBy": "InfraLang",
+  },
+})
+
+resource volumeAttachment = aws.volumeAttachment("example", {
+  deviceName: volumeDeviceName,
+  volumeId: volume.id,
+  instanceId: instance.id,
+})
+
+output instanceId = instance.id
+output volumeId = volume.id
+output publicIp = instance.public_ip
+output privateIp = instance.private_ip
+output availabilityZone = instance.availability_zone

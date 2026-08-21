@@ -1,0 +1,28 @@
+terraform {
+  requiredVersion: ">= 1.5.0",
+}
+
+provider Http from "hashicorp/http" version "~> 3.5"
+
+configure http = Http({})
+
+# The following example issues an HTTP GET request with an optional header.
+data example = http.http("example", {
+  url: "https://checkpoint-api.hashicorp.com/v1/check/terraform",
+  requestHeaders: {
+    "Accept": "application/json",
+  },
+})
+
+# The following example issues an HTTP HEAD request.
+data exampleHead = http.http("example_head", {
+  url: "https://checkpoint-api.hashicorp.com/v1/check/terraform",
+  method: "HEAD",
+})
+
+# The following example issues an HTTP POST request with an optional body.
+data examplePost = http.http("example_post", {
+  url: "https://checkpoint-api.hashicorp.com/v1/check/terraform",
+  method: "POST",
+  requestBody: "request body",
+})

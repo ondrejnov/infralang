@@ -32,7 +32,7 @@ output result = value
 		t.Fatalf("component project compilation = artifacts %#v, diagnostics %v", result.Artifacts, result.Diagnostics)
 	}
 	rootArtifact := string(result.Artifacts[0].Data)
-	if !strings.Contains(rootArtifact, `"value": "${var.runtimeValue}"`) || !strings.Contains(rootArtifact, `${module.child.result}`) || strings.Contains(rootArtifact, "component") {
+	if !strings.Contains(rootArtifact, `"value": "${var.runtime_value}"`) || !strings.Contains(rootArtifact, `${module.child.result}`) || strings.Contains(rootArtifact, "component") {
 		t.Fatalf("component project artifact:\n%s", rootArtifact)
 	}
 }

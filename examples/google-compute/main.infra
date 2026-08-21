@@ -1,0 +1,88 @@
+terraform {
+  requiredVersion: ">= 1.5.0",
+}
+
+provider Google from "hashicorp/google" version "~> 7.45"
+
+input projectId: string with {
+  description: "Google Cloud project ID where the VPS will be created.",
+}
+input region: string = "us-central1"
+input zone: string = "us-central1-a"
+input machineType: string = "e2-micro"
+input image: string = "debian-cloud/debian-12"
+input diskSizeGib: number = 20 with {
+  description: "Persistent boot disk size in GiB.",
+}
+input environment: string = "development"
+input sshSourceRanges: list<string> = ["0.0.0.0/0"] with {
+  description: "CIDR ranges allowed to connect to SSH. Restrict this before production use.",
+}
+
+configure google = Google({
+  project: projectId,
+  region: region,
+  zone: zone,
+})
+
+let vpcName = f"infralang-vpc-{environment}"
+let subnetName = f"infralang-subnet-{environment}"
+let vmName = f"infralang-vps-{environment}"
+
+resource network = google.computeNetwork("vpc", {
+  name: vpcName,
+  autoCreateSubnetworks: false,
+})
+
+resource subnet = google.computeSubnetwork("subnet", {
+  name: subnetName,
+  ipCidrRange: "10.10.0.0/24",
+  region: region,
+  network: network.id,
+})
+
+resource address = google.computeAddress("vps", {
+  name: f"{vmName}-ip",
+  region: region,
+})
+
+resource sshFirewall = google.computeFirewall("allowSsh", {
+  name: f"{vmName}-allow-ssh",
+  network: network.name,
+  sourceRanges: sshSourceRanges,
+  targetTags: ["infralang-vps"],
+  allow: {
+    protocol: "tcp",
+    ports: ["22"],
+  },
+})
+
+resource instance = google.computeInstance("vps", {
+  name: vmName,
+  machineType: machineType,
+  zone: zone,
+  tags: ["infralang-vps"],
+  labels: {
+    "environment": environment,
+    "managed-by": "infralang",
+  },
+  bootDisk: {
+    initializeParams: {
+      image: image,
+      size: diskSizeGib,
+      type: "pd-balanced",
+    },
+  },
+  networkInterface: {
+    subnetwork: subnet.id,
+    accessConfig: {
+      natIp: address.address,
+    },
+  },
+})
+
+output instanceId = instance.id
+output instanceName = instance.name
+output publicIp = address.address
+output privateIp = instance.network_interface[0].network_ip
+output sshCommand = f"gcloud compute ssh {instance.name} --zone {zone} --project {projectId}"

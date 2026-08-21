@@ -48,9 +48,9 @@ required between function arguments and recommended between object items.
 InfraLang distinguishes names used in `.infra` expressions from names emitted
 on the Terraform wire.
 
-An unaliased top-level input is the legacy exception: its source and wire names
-are both exactly the declared identifier. Use a quoted alias to preserve an
-existing Terraform variable while using a different source name:
+An unaliased top-level input uses its source name in InfraLang and its automatic
+snake_case form on the Terraform wire. Use a quoted alias only to preserve an
+existing non-standard Terraform variable name or another deliberate wire name:
 
 ```infra
 input imageId "image_id": string
@@ -59,7 +59,11 @@ let selected = imageId
 ```
 
 The generated Terraform variable is `image_id`; `imageId` is the only source
-identifier.
+identifier. The alias is redundant in this example and can be omitted:
+
+```infra
+input imageId: string
+```
 
 For object literals and structural object fields, an unquoted camelCase key is
 the source name and its snake_case form is the wire key in every context:
@@ -109,9 +113,11 @@ For a reusable structural contract, preserve it with an explicit alias:
 type Payload = object { imageId "imageId": string }
 ```
 
-Top-level inputs without aliases retain their exact declared spelling for
-compatibility. Adding or changing an input alias is a Terraform interface
-change and must be reviewed like renaming a Terraform variable.
+Top-level input names are converted to snake_case by default. Adding or changing
+an explicit input alias is a Terraform interface change and must be reviewed
+like renaming a Terraform variable. This is a breaking migration for older
+files that relied on camelCase top-level Terraform variable names; preserve such
+a name explicitly with `input imageId "imageId": string`.
 
 ## Phase 1: source ergonomics
 

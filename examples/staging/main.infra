@@ -7,7 +7,7 @@ provider Lvm from "github.com/ondrejnov/lvm" version "0.5.0"
 import module LibvirtHost from "./modules/libvirt_host"
 
 # The explicit wire alias preserves the existing Terraform variable name while source code uses camelCase.
-input vmDefaults "vm_defaults": VmDefaults = {
+input vmDefaults: VmDefaults = {
   baseImagePath: "/root/debian-13-generic-amd64.raw",
   bootstrapRoot: "/mnt/doc",
   bridge: "br10",

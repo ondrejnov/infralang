@@ -189,6 +189,14 @@ module child = Child("child", {}) with { dependsOn: [conditional] } using { null
 	if input.WireName != "image_id" || !input.ExplicitWire || len(input.MetadataItems) != 2 {
 		t.Fatalf("input = %#v", input)
 	}
+	automatic, automaticDiagnostics := Parse("automatic.infra", `input instanceType: string`)
+	if len(automaticDiagnostics) != 0 {
+		t.Fatalf("automatic input diagnostics = %v", automaticDiagnostics)
+	}
+	automaticInput := automatic.Declarations[0].(*InputDeclaration)
+	if automaticInput.WireName != "instance_type" || automaticInput.ExplicitWire {
+		t.Fatalf("automatic input = %#v", automaticInput)
+	}
 	local := file.Declarations[3].(*LetDeclaration)
 	if !local.Value.(*ObjectExpression).Fields[0].Punned {
 		t.Fatal("object field was not parsed as a pun")

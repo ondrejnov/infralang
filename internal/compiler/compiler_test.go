@@ -103,6 +103,7 @@ func TestExamplesCompile(t *testing.T) {
 	paths := []string{
 		"../../examples/aws-s3/main.infra",
 		"../../examples/basic/main.infra",
+		"../../examples/http/main.infra",
 		"../../examples/provider-alias/main.infra",
 	}
 	for _, sourcePath := range paths {
@@ -121,6 +122,28 @@ func TestExamplesCompile(t *testing.T) {
 				t.Fatalf("Compile() diagnostics = %v", diagnostics)
 			}
 		})
+	}
+}
+
+func TestCompileDataSourceWithSameProviderName(t *testing.T) {
+	t.Parallel()
+
+	result := compileSource(t, `
+provider Http from "hashicorp/http"
+configure http = Http({})
+data request = http.http("example", { url: "https://example.com" })
+`)
+
+	var document map[string]any
+	if err := json.Unmarshal(result, &document); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	dataSources := document["data"].(map[string]any)
+	if _, ok := dataSources["http"]; !ok {
+		t.Fatalf("data source type = %#v, want http", dataSources)
+	}
+	if _, ok := dataSources["http_http"]; ok {
+		t.Fatalf("data source type incorrectly retained provider prefix: %#v", dataSources)
 	}
 }
 
@@ -451,7 +474,7 @@ func TestSortedDiagnosticsUsesCompleteStableKey(t *testing.T) {
 	}
 }
 
-func TestCompileInputWireAliasAndLegacyName(t *testing.T) {
+func TestCompileInputWireAliasAndAutomaticName(t *testing.T) {
 	t.Parallel()
 
 	result := compileSource(t, `
@@ -467,11 +490,11 @@ output values = { aliased: imageId, legacy: legacyId }
 	if _, ok := variables["image_id"]; !ok {
 		t.Fatalf("aliased variable missing: %#v", variables)
 	}
-	if _, ok := variables["legacyId"]; !ok {
-		t.Fatalf("legacy variable spelling changed: %#v", variables)
+	if _, ok := variables["legacy_id"]; !ok {
+		t.Fatalf("automatic snake_case variable missing: %#v", variables)
 	}
 	value := document["output"].(map[string]any)["values"].(map[string]any)["value"].(map[string]any)
-	if value["aliased"] != `${var.image_id}` || value["legacy"] != `${var.legacyId}` {
+	if value["aliased"] != `${var.image_id}` || value["legacy"] != `${var.legacy_id}` {
 		t.Errorf("output value = %#v", value)
 	}
 }
@@ -546,7 +569,7 @@ let explicit = { fieldName: fieldName }
 		t.Fatal(err)
 	}
 	locals := document["locals"].(map[string]any)
-	if locals["punned"].(map[string]any)["field_name"] != `${var.fieldName}` {
+	if locals["punned"].(map[string]any)["field_name"] != `${var.field_name}` {
 		t.Errorf("punned local = %#v", locals["punned"])
 	}
 	if !equalJSON(locals["punned"], locals["explicit"]) {
@@ -778,8 +801,8 @@ output values = {
 	if defaultValue["image_id"] != "ami" || defaultValue["region"] != "default" || defaultValue["exactCamel"] != "kept" {
 		t.Errorf("completed config default = %#v", defaultValue)
 	}
-	if _, ok := variables["legacyInput"]; !ok {
-		t.Fatalf("legacy input spelling changed: %#v", variables)
+	if _, ok := variables["legacy_input"]; !ok {
+		t.Fatalf("automatic snake_case input missing: %#v", variables)
 	}
 	locals := document["locals"].(map[string]any)
 	if _, ok := locals["inlineValue"].(map[string]any)["image_id"]; !ok {
