@@ -99,14 +99,14 @@ dependency ordering, state, plan, and apply to Terraform or OpenTofu.
 This gives infrastructure code the abstractions and feedback developers expect
 from a programming language without giving up the Terraform ecosystem:
 
-| Terraform HCL | InfraLang |
-| --- | --- |
-| References expose declaration categories: `var.region`, `local.name`, `aws_s3_bucket.application.id` | Values are referenced directly: `region`, `name`, `bucket.id` |
-| Different block shapes for variables, locals, resources, modules, and outputs | A small, consistent set of declarations and expressions |
-| Many interface mistakes surface only during `validate` or `plan` | Unknown names, type mismatches, local module arguments, and provider mappings are checked at compile time with source locations |
-| Reuse usually requires a state-visible module boundary or repeated dynamic expressions | Typed components and `static for` remove repetition at compile time without adding state namespaces |
-| Object contracts are spread across variable declarations and call sites | Structural types, optional fields, validations, and checked input forwarding define explicit interfaces |
-| Refactoring source names can accidentally imply resource-address changes | Source handles and explicit Terraform labels are separate, so readability refactors can preserve state identity |
+| Topic | Terraform HCL | InfraLang |
+| --- | --- | --- |
+| **Referencing values** | The syntax depends on the declaration kind: `var.region`, `local.name`, `aws_s3_bucket.application.id`. | Values use their names directly: `region`, `name`, `bucket.id`. |
+| **Basic structure** | Inputs, locals, resources, modules, and outputs use different block shapes and syntax. | The same small set of declarations and expressions is used throughout, such as `input`, `let`, `resource`, `module`, and `output`. |
+| **When errors appear** | Some mistakes are found only by `terraform validate` or `plan`, such as using a value with the wrong type. | `infralang check` catches unknown names, type mismatches, local module arguments, and provider mappings before Terraform runs, with a source location for each error. Terraform/OpenTofu still validates provider attributes. |
+| **Repeating configuration** | Reuse usually means a module with its own state address namespace or complex dynamic expressions. | `components` and `static for` expand repetition at compile time, without adding another state namespace. |
+| **Input interfaces** | Object requirements are spread across variable declarations and the places where modules are called. | Structural types, optional fields, validations, and checked `...inputs(value)` forwarding define one verifiable interface. |
+| **Renaming code** | Renaming a resource label can change its state address even when the infrastructure itself is unchanged. | Source handles and explicit Terraform labels are separate, so readability refactors can preserve the state address. |
 
 The result is most noticeable beyond small configurations: less ceremony,
 shorter references, reusable typed building blocks, and errors reported against
