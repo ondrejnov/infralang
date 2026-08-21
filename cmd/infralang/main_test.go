@@ -72,6 +72,52 @@ func TestRunCheckSourceFileIncludesSiblingInfraFiles(t *testing.T) {
 	}
 }
 
+func TestRunFormatRewritesSourceAndPreservesMode(t *testing.T) {
+	directory := t.TempDir()
+	sourcePath := filepath.Join(directory, "main.infra")
+	if err := os.WriteFile(sourcePath, []byte("input   region:string=\"eu-central-1\""), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runFormat([]string{sourcePath}); err != nil {
+		t.Fatalf("runFormat() error = %v", err)
+	}
+	source, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(source), "input region: string = \"eu-central-1\"\n"; got != want {
+		t.Fatalf("formatted source = %q, want %q", got, want)
+	}
+	info, err := os.Stat(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := info.Mode().Perm(), os.FileMode(0o640); got != want {
+		t.Fatalf("formatted mode = %v, want %v", got, want)
+	}
+}
+
+func TestRunFormatDoesNotRewriteInvalidSource(t *testing.T) {
+	directory := t.TempDir()
+	sourcePath := filepath.Join(directory, "main.infra")
+	want := "input ="
+	if err := os.WriteFile(sourcePath, []byte(want), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runFormat([]string{sourcePath}); err == nil {
+		t.Fatal("runFormat() error = nil, want syntax error")
+	}
+	source, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(source); got != want {
+		t.Fatalf("source after failed format = %q, want %q", got, want)
+	}
+}
+
 func TestRunTerraformBuildsAndPassesArguments(t *testing.T) {
 	directory := t.TempDir()
 	t.Chdir(directory)

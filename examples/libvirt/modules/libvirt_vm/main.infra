@@ -55,12 +55,18 @@ input diskSizeGib: number = 10 with {
 
 input hostname: string with {
   description: "VM and guest hostname.",
-  validations: [{ condition: length(trimspace(hostname)) > 0, errorMessage: "hostname must not be empty." }],
+  validations: [{
+    condition: length(trimspace(hostname)) > 0,
+    errorMessage: "hostname must not be empty."
+  }],
 }
 
 input ipAddress: string with {
   description: "Static guest IPv4 address without a prefix.",
-  validations: [{ condition: can(cidrhost(f"{ipAddress}/32", 0)), errorMessage: "ip_address must be a valid IPv4 address." }],
+  validations: [{
+    condition: can(cidrhost(f"{ipAddress}/32", 0)),
+    errorMessage: "ip_address must be a valid IPv4 address."
+  }],
 }
 
 input qemuGuestAgentEnabled: bool = false with {
@@ -69,7 +75,10 @@ input qemuGuestAgentEnabled: bool = false with {
 
 input ramMb: number = 1024 with {
   description: "Guest memory in MiB.",
-  validations: [{ condition: ramMb >= 256, errorMessage: "ram_mb must be at least 256." }],
+  validations: [{
+    condition: ramMb >= 256,
+    errorMessage: "ram_mb must be at least 256."
+  }],
 }
 
 input rootPassword: optional<string> with {
@@ -92,7 +101,10 @@ input setupFiles: list<SetupFile> = [] with {
 
 input vcpu: number = 2 with {
   description: "Number of virtual CPUs.",
-  validations: [{ condition: vcpu >= 1, errorMessage: "vcpu must be at least 1." }],
+  validations: [{
+    condition: vcpu >= 1,
+    errorMessage: "vcpu must be at least 1."
+  }],
 }
 
 input running: bool = true with { description: "Running" }
@@ -110,7 +122,7 @@ let cloudConfig = {
   disableRoot: false,
   hostname,
   manageResolvConf: false,
-  packages: concat(["python3"], qemuGuestAgentEnabled ? ["qemu-guest-agent"] : []),
+  packages: concat(["python3"], qemuGuestAgentEnabled ? ["qemu-guest-agent"]: []),
   sshDeletekeys: true,
   sshPwauth: rootPassword != null,
   users: [{
@@ -175,7 +187,7 @@ resource rootImage = terraform.data("root_image", {
       inline: [f"dd if={jsonencode(commonConfig.baseImagePath)} of={jsonencode(rootVolume.path)} bs=4M conv=fsync"],
     },
   }],
-}) when !adoptExisting
+}) when ! adoptExisting
 
 resource seedDisk = libvirt.cloudinitDisk("seed", {
   name: f"{hostname}-cloud-init",
@@ -197,17 +209,20 @@ resource seedDisk = libvirt.cloudinitDisk("seed", {
           gateway: commonConfig.gateway,
         }],
       },
-      { type: "nameserver", address: [commonConfig.gateway] },
+      {
+        type: "nameserver",
+        address: [commonConfig.gateway]
+      },
     ],
   }),
-}) when !adoptExisting
+}) when ! adoptExisting
 
 resource seedVolume = libvirt.volume("seed", {
   name: f"{hostname}-cloud-init.iso",
   pool: commonConfig.cloudinitPool,
   target: { format: { type: "iso" } },
   create: { content: { url: seedDisk[0].path } },
-}) when !adoptExisting
+}) when ! adoptExisting
 
 resource vm = libvirt.domain("vm", {
   name: hostname,
@@ -217,36 +232,58 @@ resource vm = libvirt.domain("vm", {
   vcpu: vcpu,
   autostart: true,
   running: running,
-  cpu: cpuMode == null ? null : { mode: cpuMode },
-  os: { type: "hvm", typeArch: "x86_64", typeMachine: "q35" },
+  cpu: cpuMode == null ? null: { mode: cpuMode },
+  os: {
+    type: "hvm",
+    typeArch: "x86_64",
+    typeMachine: "q35"
+  },
   features: { acpi: true },
   devices: {
     channels: qemuGuestAgentEnabled ? [{
       source: { unix: { mode: "bind" } },
       target: { virtIo: { name: "org.qemu.guest_agent.0" } },
-    }] : [],
+    }]: [],
     consoles: serialConsoleEnabled ? [{
       source: { pty: { path: "" } },
-      target: { port: 0, type: "serial" },
-    }] : [],
+      target: {
+        port: 0,
+        type: "serial"
+      },
+    }]: [],
     disks: concat(
       [{
         device: "disk",
-        driver: { name: "qemu", type: "raw" },
+        driver: {
+          name: "qemu",
+          type: "raw"
+        },
         source: { block: { dev: rootVolume.path } },
-        target: { dev: "vda", bus: "virtio" },
+        target: {
+          dev: "vda",
+          bus: "virtio"
+        },
       }],
       [for volume in dataVolume: {
         device: "disk",
-        driver: { name: "qemu", type: "raw" },
+        driver: {
+          name: "qemu",
+          type: "raw"
+        },
         source: { block: { dev: volume.path } },
-        target: { dev: "vdb", bus: "virtio" },
+        target: {
+          dev: "vdb",
+          bus: "virtio"
+        },
       }],
       [{
         device: "cdrom",
         readOnly: true,
-        source: { file: { file: adoptExisting ? cloudinitIsoPath : seedVolume[0].path } },
-        target: { dev: "sda", bus: "sata" },
+        source: { file: { file: adoptExisting ? cloudinitIsoPath: seedVolume[0].path } },
+        target: {
+          dev: "sda",
+          bus: "sata"
+        },
       }],
     ),
     interfaces: [{

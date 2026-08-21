@@ -151,3 +151,8 @@ type CompletionItem struct {
 	InsertText    string `json:"insertText,omitempty"`
 	SortText      string `json:"sortText,omitempty"`
 }
+
+type TextEdit struct {
+	Range   Range  `json:"range"`
+	NewText string `json:"newText"`
+}

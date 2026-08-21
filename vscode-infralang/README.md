@@ -13,10 +13,13 @@ Desktop Visual Studio Code language support for `.infra` files.
 - Completes InfraLang declarations, types, visible symbols, structural object members, components, component exports, local module outputs, and inputs of initialized Terraform modules.
 - Completes installed provider configurations, resource types, data sources, arguments, nested block names, and result attributes from Terraform or OpenTofu schemas when enabled.
 - Supports Go to Definition, hover, document symbols, and workspace symbols for InfraLang declarations and imported types.
+- Formats valid InfraLang documents and enables InfraLang formatting on save by default.
 - Writes client and server process logs to the **InfraLang Language Server** output channel.
 - Provides **InfraLang: Restart Language Server** so path or argument changes can be applied without reloading the window.
 
 Syntax highlighting and language configuration work even when the language server is disabled or unavailable. Diagnostics, navigation, completion, hover, and other protocol features depend on the capabilities implemented by the selected server.
+
+Formatting on save uses this extension as the default formatter for `infralang` documents. A workspace or user setting can override `editor.formatOnSave` or `editor.defaultFormatter` when needed. Files with syntax errors are left unchanged.
 
 ## Installation
 

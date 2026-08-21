@@ -5,6 +5,7 @@ All notable changes to the InfraLang Visual Studio Code extension are documented
 ## Unreleased
 
 - Complete input keys and metadata for Terraform modules present in the local initialization manifest.
+- Add document formatting and enable InfraLang formatting on save by default.
 
 ## 0.1.0
 

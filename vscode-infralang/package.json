@@ -19,7 +19,8 @@
   },
   "categories": [
     "Programming Languages",
-    "Linters"
+    "Linters",
+    "Formatters"
   ],
   "keywords": [
     "infralang",
@@ -54,6 +55,12 @@
         "path": "./syntaxes/infralang.tmGrammar.json"
       }
     ],
+    "configurationDefaults": {
+      "[infralang]": {
+        "editor.defaultFormatter": "infralang.vscode-infralang",
+        "editor.formatOnSave": true
+      }
+    },
     "commands": [
       {
         "command": "infralang.restartLanguageServer",

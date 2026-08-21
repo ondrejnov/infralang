@@ -333,14 +333,16 @@ JSON; the resulting resources retain explicit addresses such as
 
 ```shell
 bin/infralang check examples/libvirt
+bin/infralang fmt examples/basic/main.infra
 bin/infralang build examples/libvirt
 bin/infralang build -o generated.tf.json examples/basic/main.infra
 bin/infralang version
 ```
 
 `check` validates a source file or module directory without writing Terraform
-JSON. `build` compiles a source file or directory and writes `.tf.json` output;
-`-stdout` and `-o` are available for single-file builds.
+JSON. `fmt` atomically formats a valid `.infra` source file in place. `build`
+compiles a source file or directory and writes `.tf.json` output; `-stdout` and
+`-o` are available for single-file builds.
 
 The `init`, `validate`, `plan`, `apply`, and `destroy` commands build the
 InfraLang source in the current directory first and then pass all arguments to

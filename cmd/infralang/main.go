@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"flag"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/ondrejnov/infralang/internal/compiler"
+	"github.com/ondrejnov/infralang/internal/formatter"
 	"github.com/ondrejnov/infralang/internal/project"
 	"github.com/ondrejnov/infralang/internal/syntax"
 )
@@ -46,6 +48,8 @@ func run(arguments []string) error {
 		return runBuild(arguments[1:])
 	case "check":
 		return runCheck(arguments[1:])
+	case "fmt":
+		return runFormat(arguments[1:])
 	case "init", "apply", "validate", "plan", "destroy":
 		return runTerraform(arguments[0], arguments[1:])
 	case "version", "--version", "-version":
@@ -58,6 +62,46 @@ func run(arguments []string) error {
 		printUsage(os.Stderr)
 		return fmt.Errorf("unknown command %q", arguments[0])
 	}
+}
+
+func runFormat(arguments []string) error {
+	flags := flag.NewFlagSet("fmt", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	if err := flags.Parse(arguments); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 {
+		return errors.New("fmt expects exactly one .infra source file")
+	}
+
+	sourcePath := flags.Arg(0)
+	if filepath.Ext(sourcePath) != ".infra" {
+		return fmt.Errorf("source file %q must use the .infra extension", sourcePath)
+	}
+	info, err := os.Stat(sourcePath)
+	if err != nil {
+		return fmt.Errorf("inspect %s: %w", sourcePath, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("source file %q must be a file", sourcePath)
+	}
+	source, err := os.ReadFile(sourcePath)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", sourcePath, err)
+	}
+	formatted, diagnostics := formatter.Format(sourcePath, string(source))
+	if len(diagnostics) > 0 {
+		printDiagnostics(os.Stderr, diagnostics)
+		return fmt.Errorf("format failed with %d error(s)", len(diagnostics))
+	}
+	if bytes.Equal(source, formatted) {
+		return nil
+	}
+	if err := writeAtomicallyWithMode(sourcePath, formatted, info.Mode().Perm()); err != nil {
+		return err
+	}
+	fmt.Println(sourcePath)
+	return nil
 }
 
 func runTerraform(terraformCommand string, arguments []string) error {
@@ -313,6 +357,10 @@ func hasSiblingInfraFiles(sourcePath string) (bool, error) {
 }
 
 func writeAtomically(outputPath string, data []byte) error {
+	return writeAtomicallyWithMode(outputPath, data, 0o644)
+}
+
+func writeAtomicallyWithMode(outputPath string, data []byte, mode os.FileMode) error {
 	directory := filepath.Dir(outputPath)
 	temporary, err := os.CreateTemp(directory, ".infralang-*.tmp")
 	if err != nil {
@@ -325,7 +373,7 @@ func writeAtomically(outputPath string, data []byte) error {
 		temporary.Close()
 		return fmt.Errorf("write temporary output: %w", err)
 	}
-	if err := temporary.Chmod(0o644); err != nil {
+	if err := temporary.Chmod(mode); err != nil {
 		temporary.Close()
 		return fmt.Errorf("set output permissions: %w", err)
 	}
@@ -377,6 +425,7 @@ func printUsage(output *os.File) {
 	fmt.Fprintln(output, "Usage:")
 	fmt.Fprintln(output, "  infralang build [-o FILE | -stdout] SOURCE.infra|MODULE_DIR")
 	fmt.Fprintln(output, "  infralang check SOURCE.infra|MODULE_DIR")
+	fmt.Fprintln(output, "  infralang fmt SOURCE.infra")
 	fmt.Fprintln(output, "  infralang init|validate|plan|apply|destroy [TERRAFORM_ARGS...]")
 	fmt.Fprintln(output, "  infralang version")
 }

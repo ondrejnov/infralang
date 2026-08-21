@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/ondrejnov/infralang/internal/compiler"
+	"github.com/ondrejnov/infralang/internal/formatter"
 	"github.com/ondrejnov/infralang/internal/syntax"
 )
 
@@ -110,10 +111,11 @@ func (server *server) handle(message rpcMessage) {
 		}
 		server.writeResult(message.ID, map[string]any{
 			"capabilities": map[string]any{
-				"positionEncoding":   "utf-16",
-				"textDocumentSync":   map[string]any{"openClose": true, "change": 1, "save": map[string]any{"includeText": true}},
-				"completionProvider": map[string]any{"triggerCharacters": []string{".", ":", "{"}},
-				"definitionProvider": true, "hoverProvider": true, "documentSymbolProvider": true,
+				"positionEncoding":           "utf-16",
+				"textDocumentSync":           map[string]any{"openClose": true, "change": 1, "save": map[string]any{"includeText": true}},
+				"completionProvider":         map[string]any{"triggerCharacters": []string{".", ":", "{"}},
+				"documentFormattingProvider": true,
+				"definitionProvider":         true, "hoverProvider": true, "documentSymbolProvider": true,
 				"workspaceSymbolProvider": true,
 			},
 			"serverInfo": map[string]any{"name": "infralang-lsp", "version": "0.1.0"},
@@ -232,6 +234,15 @@ func (server *server) handle(message rpcMessage) {
 			return
 		}
 		server.writeResult(message.ID, server.documentSymbols(params.TextDocument.URI))
+	case "textDocument/formatting":
+		var params struct {
+			TextDocument TextDocumentIdentifier `json:"textDocument"`
+		}
+		if !decodeParams(message.Params, &params) {
+			server.writeError(message.ID, errInvalidParams, "invalid document formatting parameters")
+			return
+		}
+		server.writeResult(message.ID, server.formatDocument(params.TextDocument.URI))
 	case "workspace/symbol":
 		var params struct {
 			Query string `json:"query"`
@@ -246,6 +257,21 @@ func (server *server) handle(message rpcMessage) {
 			server.writeError(message.ID, errMethodNotFound, "method not found: "+message.Method)
 		}
 	}
+}
+
+func (server *server) formatDocument(uri string) []TextEdit {
+	path, source, ok := server.workspace.source(uri)
+	if !ok {
+		return []TextEdit{}
+	}
+	formatted, diagnostics := formatter.Format(path, source)
+	if len(diagnostics) > 0 || string(formatted) == source {
+		return []TextEdit{}
+	}
+	return []TextEdit{{
+		Range:   Range{Start: Position{}, End: positionAt(source, len(source))},
+		NewText: string(formatted),
+	}}
 }
 
 func decodeParams(raw json.RawMessage, target any) bool {

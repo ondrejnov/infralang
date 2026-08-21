@@ -16,7 +16,7 @@ configure lvm = Lvm({
 
 resource dataVolume = lvm.logicalVolume("data", {
   name: volumeName,
-  size: sizeGiB *2,
+  size: sizeGiB * 2,
   volumeGroup: volumeGroup,
 }) with {
   lifecycle: {

@@ -28,9 +28,17 @@ input vms: map<VmConfig> with {
 resource network = libvirt.network("main", {
   name: networkName,
   autostart: true,
-  bridge: { delay: "0", name: commonConfig.bridge, stp: "on" },
+  bridge: {
+    delay: "0",
+    name: commonConfig.bridge,
+    stp: "on"
+  },
   forward: { mode: "route" },
-  ips: [{ address: commonConfig.gateway, family: "ipv4", prefix: commonConfig.prefixLength }],
+  ips: [{
+    address: commonConfig.gateway,
+    family: "ipv4",
+    prefix: commonConfig.prefixLength
+  }],
   mtu: { size: commonConfig.mtu },
 })
 
@@ -38,7 +46,11 @@ resource cloudinitPool = libvirt.pool("cloudinit", {
   name: commonConfig.cloudinitPool,
   type: "dir",
   target: { path: commonConfig.cloudinitDirectory },
-  create: { autostart: true, build: true, start: true },
+  create: {
+    autostart: true,
+    build: true,
+    start: true
+  },
   destroy: { delete: false },
 })
 
@@ -57,6 +69,5 @@ output vms = {for hostname, vm in vmModule: hostname => {
   ip_address: vm.ip_address,
 }} with { description: "Details of the virtual machines managed on this libvirt host." }
 
-output serial_console_enabled_vms = sort([
-  for hostname, vm in vmModule: hostname if vm.serial_console_enabled
-]) with { description: "VM hostnames with a PTY serial console configured." }
+output serial_console_enabled_vms = sort([for hostname, vm in vmModule: hostname if vm.serial_console_enabled])
+with { description: "VM hostnames with a PTY serial console configured." }

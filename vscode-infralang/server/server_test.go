@@ -84,6 +84,40 @@ func TestUTF16Positions(t *testing.T) {
 	}
 }
 
+func TestDocumentFormattingUsesOpenDocumentAndReturnsFullEdit(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "main.infra")
+	writeTestFile(t, path, "input oldValue: string\n")
+	workspace := newWorkspace()
+	uri := pathToURI(path)
+	source := "input   region:string=\"eu-central-1\""
+	if _, err := workspace.open(uri, source, 2); err != nil {
+		t.Fatalf("open document: %v", err)
+	}
+
+	edits := (&server{workspace: workspace}).formatDocument(uri)
+	if len(edits) != 1 {
+		t.Fatalf("formatDocument() edits = %#v, want one edit", edits)
+	}
+	if got, want := edits[0].NewText, "input region: string = \"eu-central-1\"\n"; got != want {
+		t.Fatalf("formatted text = %q, want %q", got, want)
+	}
+	if got, want := edits[0].Range.End, positionAt(source, len(source)); got != want {
+		t.Fatalf("edit end = %#v, want %#v", got, want)
+	}
+}
+
+func TestDocumentFormattingReturnsNoEditForInvalidSource(t *testing.T) {
+	workspace := newWorkspace()
+	uri := pathToURI(filepath.Join(t.TempDir(), "main.infra"))
+	if _, err := workspace.open(uri, "input =", 1); err != nil {
+		t.Fatalf("open document: %v", err)
+	}
+	if edits := (&server{workspace: workspace}).formatDocument(uri); len(edits) != 0 {
+		t.Fatalf("formatDocument() edits = %#v, want none", edits)
+	}
+}
+
 func TestWorkspaceIndexIncludesModuleAndNestedDeclarations(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "defs.infra"), `
