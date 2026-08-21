@@ -1,12 +1,57 @@
 # InfraLang
 
-InfraLang is a programmer-oriented language that compiles to Terraform JSON.
+InfraLang is a statically checked, programmer-oriented language that compiles to
+Terraform JSON.
 It preserves Terraform and OpenTofu providers, modules, dependency graphs,
 state, planning, and apply behavior instead of replacing the ecosystem.
 
-The current release is an MVP compiler. It is suitable for experimenting with
-the language and generating Terraform configuration, not yet for production
-infrastructure.
+[Language reference](docs/language.md) · [Releases](https://github.com/ondrejnov/infralang/releases) · [VS Code extension](vscode-infralang/)
+
+> [!WARNING]
+> InfraLang is an experimental MVP. Use it to explore the language and generate
+> Terraform configuration, but do not use it for production infrastructure yet.
+
+## Quick start
+
+### Requirements
+
+- Go 1.24 or newer to build InfraLang from source
+- Terraform or OpenTofu for initialization, validation, planning, and apply
+- The providers required by the example or your own configuration
+
+Build the CLI from a checkout:
+
+```shell
+git clone https://github.com/ondrejnov/infralang.git
+cd infralang
+mkdir -p bin
+go build -o bin/infralang ./cmd/infralang
+```
+
+Prebuilt binaries for Linux, macOS, and Windows are available on the
+[Releases](https://github.com/ondrejnov/infralang/releases) page.
+
+Check and build an example:
+
+```shell
+bin/infralang check examples/basic/main.infra
+bin/infralang build examples/basic/main.infra
+```
+
+The build writes `examples/basic/main.tf.json`. To inspect the generated JSON
+without writing a file, use `bin/infralang build -stdout examples/basic/main.infra`.
+
+Run Terraform from an example directory as usual:
+
+```shell
+cd examples/basic
+../../bin/infralang init -backend=false
+../../bin/infralang validate
+../../bin/infralang plan -input=false
+```
+
+For a first AWS example, see [`examples/aws-s3`](examples/aws-s3/). It requires
+the HashiCorp AWS provider and valid AWS credentials.
 
 ## Features
 
@@ -34,7 +79,8 @@ infrastructure.
 - Canonical type-only imports and directory-scoped reusable components
 - Indexed provider, module, and component handles that erase before Terraform lowering
 
-See [docs/language.md](docs/language.md) for the language reference.
+See the [language reference](docs/language.md) for syntax, type rules, imports,
+components, modules, and Terraform lowering details.
 
 ## Why move from Terraform HCL to InfraLang?
 
@@ -283,25 +329,18 @@ rest of the program. Components and indexes disappear from generated Terraform
 JSON; the resulting resources retain explicit addresses such as
 `aws_s3_bucket.app_development` and `aws_s3_bucket.app_production`.
 
-## Build
+## CLI
 
 ```shell
-mkdir -p bin
-go build -o bin/infralang ./cmd/infralang
-```
-
-## Usage
-
-```shell
-bin/infralang check examples/basic/main.infra
-bin/infralang build examples/basic/main.infra
 bin/infralang check examples/staging
 bin/infralang build examples/staging
-cd examples/basic
-../../bin/infralang init -backend=false
-../../bin/infralang validate
-../../bin/infralang plan -input=false
+bin/infralang build -o generated.tf.json examples/basic/main.infra
+bin/infralang version
 ```
+
+`check` validates a source file or module directory without writing Terraform
+JSON. `build` compiles a source file or directory and writes `.tf.json` output;
+`-stdout` and `-o` are available for single-file builds.
 
 The `init`, `validate`, `plan`, `apply`, and `destroy` commands build the
 InfraLang source in the current directory first and then pass all arguments to
@@ -321,12 +360,6 @@ whose globally unique name includes the current AWS account ID.
 
 Generated `*.tf.json` files are ignored by Git because they are compiler
 artifacts.
-
-To inspect generated JSON without writing a file:
-
-```shell
-bin/infralang build -stdout examples/basic/main.infra
-```
 
 ## Example
 
@@ -362,8 +395,8 @@ InfraLang's three implemented language phases are cumulative:
    ordered spreads and conditional fields, typed `each`, checked local module
    interfaces, and `...inputs(value)` forwarding.
 3. Phase 3 adds exact constants, deterministic `static for`, compile-time
-	labels and indexed handles, canonical type and module imports, and hygienic
-	reusable components with virtual exports.
+   labels and indexed handles, canonical type and module imports, and hygienic
+   reusable components with virtual exports.
 
 Compile-time declarations erase completely. Terraform JSON contains only
 ordinary Terraform settings, providers, variables, locals, resources, data
@@ -436,14 +469,14 @@ old state must be retained, an author-supplied `moved` declaration.
 
 ## Staging example
 
-`examples/staging` is a complete InfraLang representation of
-`/var/www/infrabot/terraform-staging`, including both local modules. It keeps
-the existing provider aliases, resource labels, module addresses, optional
-attribute defaults, validations, and moved-state declarations. The root uses
-type imports, exact constants, static loops, indexed providers, components,
-virtual exports, and checked input forwarding while preserving the original
-Terraform identity. A directory build recursively generates Terraform JSON for
-the root, `libvirt_host`, and `libvirt_vm` modules.
+`examples/staging` is a complete InfraLang representation of a larger Libvirt
+staging environment, including both local modules. It demonstrates provider
+aliases, resource labels, module addresses, optional attribute defaults,
+validations, and moved-state declarations. The root uses type imports, exact
+constants, static loops, indexed providers, components, virtual exports, and
+checked input forwarding while preserving Terraform identity. A directory build
+recursively generates Terraform JSON for the root, `libvirt_host`, and
+`libvirt_vm` modules.
 
 ## Architecture
 
@@ -461,9 +494,10 @@ the root, `libvirt_host`, and `libvirt_vm` modules.
 Terraform remains responsible for unknown values, dependency graph execution,
 state locking, provider lifecycle, and apply semantics.
 
-## Roadmap
+## VS Code
 
-- Provider-schema generated types and completion metadata
-- User-defined pure functions
-- Formatter and language server
-- Native test syntax lowered to Terraform tests
+The [`vscode-infralang`](vscode-infralang/) directory contains the desktop VS
+Code extension. It provides syntax highlighting, diagnostics, navigation,
+completion, hover information, and an InfraLang language server. Packaged VSIX
+files are attached to each GitHub release; source-development instructions are
+in the extension's README.
