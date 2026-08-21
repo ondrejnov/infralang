@@ -22,7 +22,7 @@ type terraformProviderSchemaDocument struct {
 }
 
 func loadProviderSchemas(root string) (compiler.ProviderSchemas, error) {
-	command := exec.Command("terraform", "providers", "schema", "-json")
+	command := exec.Command(terraformBinary, "providers", "schema", "-json")
 	command.Dir = root
 	var stderr bytes.Buffer
 	command.Stderr = &stderr

@@ -297,9 +297,16 @@ bin/infralang check examples/basic/main.infra
 bin/infralang build examples/basic/main.infra
 bin/infralang check examples/staging
 bin/infralang build examples/staging
-terraform -chdir=examples/basic init -backend=false
-terraform -chdir=examples/basic validate
+cd examples/basic
+../../bin/infralang init -backend=false
+../../bin/infralang validate
+../../bin/infralang plan -input=false
 ```
+
+The `init`, `validate`, `plan`, `apply`, and `destroy` commands build the
+InfraLang source in the current directory first and then pass all arguments to
+Terraform. Terraform runs in the current directory and keeps its normal stdin,
+stdout, stderr, and exit status behavior.
 
 `examples/provider-alias` exercises an external Terraform provider and an
 aliased provider configuration. It uses `hashicorp/null` 3.3.1 only as a small

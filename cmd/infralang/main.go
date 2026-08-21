@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -16,6 +17,8 @@ import (
 
 const version = "0.1.0"
 
+var terraformBinary = "terraform"
+
 type buildArtifact struct {
 	directory string
 	result    []byte
@@ -23,6 +26,10 @@ type buildArtifact struct {
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
+		var exitError *exec.ExitError
+		if errors.As(err, &exitError) {
+			os.Exit(exitError.ExitCode())
+		}
 		fmt.Fprintf(os.Stderr, "infralang: %v\n", err)
 		os.Exit(1)
 	}
@@ -39,6 +46,8 @@ func run(arguments []string) error {
 		return runBuild(arguments[1:])
 	case "check":
 		return runCheck(arguments[1:])
+	case "init", "apply", "validate", "plan", "destroy":
+		return runTerraform(arguments[0], arguments[1:])
 	case "version", "--version", "-version":
 		fmt.Printf("InfraLang %s\n", version)
 		return nil
@@ -49,6 +58,90 @@ func run(arguments []string) error {
 		printUsage(os.Stderr)
 		return fmt.Errorf("unknown command %q", arguments[0])
 	}
+}
+
+func runTerraform(terraformCommand string, arguments []string) error {
+	workingDirectory, err := buildForTerraform(".")
+	if err != nil {
+		return err
+	}
+
+	terraformArguments := append([]string{terraformCommand}, arguments...)
+	command := exec.Command(terraformBinary, terraformArguments...)
+	command.Dir = workingDirectory
+	command.Stdin = os.Stdin
+	command.Stdout = os.Stdout
+	command.Stderr = os.Stderr
+	return command.Run()
+}
+
+func buildForTerraform(sourcePath string) (string, error) {
+	info, err := os.Stat(sourcePath)
+	if err != nil {
+		return "", fmt.Errorf("inspect %s: %w", sourcePath, err)
+	}
+
+	if info.IsDir() {
+		artifacts, diagnostics, err := compileProject(sourcePath)
+		if err != nil {
+			return "", err
+		}
+		if len(diagnostics) > 0 {
+			printDiagnostics(os.Stderr, diagnostics)
+			return "", fmt.Errorf("compilation failed with %d error(s)", len(diagnostics))
+		}
+		if err := writeBuildArtifacts(artifacts); err != nil {
+			return "", err
+		}
+		return sourcePath, nil
+	}
+
+	if filepath.Ext(sourcePath) != ".infra" {
+		return "", fmt.Errorf("source file %q must use the .infra extension", sourcePath)
+	}
+	module, err := hasSiblingInfraFiles(sourcePath)
+	if err != nil {
+		return "", err
+	}
+	if module {
+		root := filepath.Dir(sourcePath)
+		artifacts, diagnostics, err := compileProject(root)
+		if err != nil {
+			return "", err
+		}
+		if len(diagnostics) > 0 {
+			printDiagnostics(os.Stderr, diagnostics)
+			return "", fmt.Errorf("compilation failed with %d error(s)", len(diagnostics))
+		}
+		if err := writeBuildArtifacts(artifacts); err != nil {
+			return "", err
+		}
+		return root, nil
+	}
+
+	result, diagnostics, err := compileFile(sourcePath)
+	if err != nil {
+		return "", err
+	}
+	if len(diagnostics) > 0 {
+		printDiagnostics(os.Stderr, diagnostics)
+		return "", fmt.Errorf("compilation failed with %d error(s)", len(diagnostics))
+	}
+	outputPath := strings.TrimSuffix(sourcePath, filepath.Ext(sourcePath)) + ".tf.json"
+	if err := writeAtomically(outputPath, result); err != nil {
+		return "", err
+	}
+	return filepath.Dir(sourcePath), nil
+}
+
+func writeBuildArtifacts(artifacts []buildArtifact) error {
+	for _, artifact := range artifacts {
+		outputPath := filepath.Join(artifact.directory, "main.tf.json")
+		if err := writeAtomically(outputPath, artifact.result); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func runBuild(arguments []string) error {
@@ -83,11 +176,11 @@ func runBuild(arguments []string) error {
 			printDiagnostics(os.Stderr, diagnostics)
 			return fmt.Errorf("compilation failed with %d error(s)", len(diagnostics))
 		}
+		if err := writeBuildArtifacts(artifacts); err != nil {
+			return err
+		}
 		for _, artifact := range artifacts {
 			outputPath := filepath.Join(artifact.directory, "main.tf.json")
-			if err := writeAtomically(outputPath, artifact.result); err != nil {
-				return err
-			}
 			fmt.Printf("wrote %s\n", outputPath)
 		}
 		return nil
@@ -284,5 +377,6 @@ func printUsage(output *os.File) {
 	fmt.Fprintln(output, "Usage:")
 	fmt.Fprintln(output, "  infralang build [-o FILE | -stdout] SOURCE.infra|MODULE_DIR")
 	fmt.Fprintln(output, "  infralang check SOURCE.infra|MODULE_DIR")
+	fmt.Fprintln(output, "  infralang init|validate|plan|apply|destroy [TERRAFORM_ARGS...]")
 	fmt.Fprintln(output, "  infralang version")
 }
