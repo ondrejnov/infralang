@@ -1,0 +1,154 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-infralang:
+    name: Build infralang (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-amd64
+            goos: linux
+            goarch: amd64
+          - target: linux-arm64
+            goos: linux
+            goarch: arm64
+          - target: linux-armv7
+            goos: linux
+            goarch: arm
+            goarm: "7"
+          - target: darwin-amd64
+            goos: darwin
+            goarch: amd64
+          - target: darwin-arm64
+            goos: darwin
+            goarch: arm64
+          - target: windows-amd64
+            goos: windows
+            goarch: amd64
+          - target: windows-arm64
+            goos: windows
+            goarch: arm64
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build binary
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          binary="infralang-${{ matrix.target }}"
+          if [[ "$GOOS" == "windows" ]]; then
+            binary="$binary.exe"
+          fi
+          ldflags="-s -w -X main.version=${GITHUB_REF_NAME#v}"
+          go build -trimpath -ldflags="$ldflags" \
+            -o "dist/$binary" \
+            ./cmd/infralang
+          if [[ "$GOOS" == "windows" ]]; then
+            7z a "dist/${binary%.exe}.zip" "dist/$binary"
+            rm "dist/$binary"
+          else
+            tar -C dist -czf "dist/${binary}.tar.gz" "$binary"
+            rm "dist/$binary"
+          fi
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: infralang-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  build-extension:
+    name: Build VS Code extensions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: vscode-infralang/package-lock.json
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install extension dependencies
+        working-directory: vscode-infralang
+        run: npm ci
+
+      - name: Set extension version from tag
+        working-directory: vscode-infralang
+        run: |
+          npm version "${GITHUB_REF_NAME#v}" \
+            --no-git-tag-version \
+            --allow-same-version
+
+      - name: Test extension
+        working-directory: vscode-infralang
+        run: npm test
+
+      - name: Package VSIX files
+        working-directory: vscode-infralang
+        run: npm run package:all
+
+      - name: Upload VSIX files
+        uses: actions/upload-artifact@v4
+        with:
+          name: vscode-infralang
+          path: vscode-infralang/*.vsix
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub Release
+    needs:
+      - build-infralang
+      - build-extension
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            release-assets/* \
+            --verify-tag \
+            --generate-notes
