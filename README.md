@@ -5,45 +5,55 @@ Terraform JSON.
 It preserves Terraform and OpenTofu providers, modules, dependency graphs,
 state, planning, and apply behavior instead of replacing the ecosystem.
 
-[Language reference](docs/language.md) · [Releases](https://github.com/ondrejnov/infralang/releases) · [VS Code extension](vscode-infralang/)
+[Language reference](docs/language.md) · [VS Code extension](vscode-infralang/)
 
 ## Quick start
 
 ### Requirements
 
-- Go 1.24 or newer to build InfraLang from source
 - Terraform or OpenTofu for initialization, validation, planning, and apply
 - The providers required by the example or your own configuration
 
-Build the CLI from a checkout:
+Download the latest release for your platform from the
+[GitHub Releases](https://github.com/ondrejnov/infralang/releases) page. For
+Linux amd64, the binary can be installed with:
+
+```shell
+tmpdir="$(mktemp -d)"
+curl -fL https://github.com/ondrejnov/infralang/releases/latest/download/infralang-linux-amd64.tar.gz -o "$tmpdir/infralang.tar.gz"
+tar -xzf "$tmpdir/infralang.tar.gz" -C "$tmpdir"
+mkdir -p "$HOME/.local/bin"
+install -m 0755 "$tmpdir/infralang" "$HOME/.local/bin/infralang"
+export PATH="$HOME/.local/bin:$PATH"
+infralang version
+```
+
+Choose the matching Linux, macOS, or Windows archive when installing on a
+different platform. If the repository is not checked out yet, clone it to use
+the included examples:
 
 ```shell
 git clone https://github.com/ondrejnov/infralang.git
 cd infralang
-mkdir -p bin
-go build -o bin/infralang ./cmd/infralang
 ```
-
-Prebuilt binaries for Linux, macOS, and Windows are available on the
-[Releases](https://github.com/ondrejnov/infralang/releases) page.
 
 Check and build an example:
 
 ```shell
-bin/infralang check examples/basic/main.infra
-bin/infralang build examples/basic/main.infra
+infralang check examples/basic/main.infra
+infralang build examples/basic/main.infra
 ```
 
 The build writes `examples/basic/main.tf.json`. To inspect the generated JSON
-without writing a file, use `bin/infralang build -stdout examples/basic/main.infra`.
+without writing a file, use `infralang build -stdout examples/basic/main.infra`.
 
 Run Terraform from an example directory as usual:
 
 ```shell
 cd examples/basic
-../../bin/infralang init -backend=false
-../../bin/infralang validate
-../../bin/infralang plan -input=false
+infralang init -backend=false
+infralang validate
+infralang plan -input=false
 ```
 
 For a first AWS example, see [`examples/aws-s3`](examples/aws-s3/). It requires
@@ -497,3 +507,36 @@ Code extension. It provides syntax highlighting, diagnostics, navigation,
 completion, hover information, and an InfraLang language server. Packaged VSIX
 files are attached to each GitHub release; source-development instructions are
 in the extension's README.
+
+## Local build
+
+Requirements for a local build:
+
+- Go 1.24 or newer
+- Terraform or OpenTofu for initialization, validation, planning, and apply
+
+To build the CLI from a source checkout instead of installing a release:
+
+```shell
+git clone https://github.com/ondrejnov/infralang.git
+cd infralang
+mkdir -p bin
+go build -o bin/infralang ./cmd/infralang
+```
+
+Run the locally built CLI with the same example workflow:
+
+```shell
+bin/infralang check examples/basic/main.infra
+bin/infralang build examples/basic/main.infra
+bin/infralang build -stdout examples/basic/main.infra
+```
+
+Run Terraform from an example directory using the local binary:
+
+```shell
+cd examples/basic
+../../bin/infralang init -backend=false
+../../bin/infralang validate
+../../bin/infralang plan -input=false
+```
