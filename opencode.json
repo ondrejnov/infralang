@@ -47,14 +47,6 @@
       "command": ["uvx", "ansible-know-mcp"],
       "type": "local"
     },
-    "grafana": {
-      "type": "remote",
-      "url": "https://grafana-dev-mcp.reactis.cloud/mcp",
-      "enabled": true,
-      "headers": {
-        "Authorization": "Basic bWNwOjAzZmNmNDdiNDg2NWYyMmNlMDRmNjMwMDcxMGI5NzM2NThmY2RlNTYzMTkyNmVjYmE5NjhkZDcwNTcwZDdhOWM="
-      }
-    },
     "terraform": {
       "command": [
         "docker",
