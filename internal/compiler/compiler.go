@@ -1465,8 +1465,7 @@ func (c *compiler) checkExpressionUncached(expression syntax.Expression) valueTy
 	case *syntax.MemberExpression:
 		targetType := c.checkExpression(value.Target)
 		if identifier, ok := value.Target.(*syntax.IdentifierExpression); ok {
-			if target := c.symbols[identifier.Name]; target != nil && target.kind == symbolResource && target.resource != nil && target.resource.conditional {
-				c.addDiagnostic(value.GetSpan(), fmt.Sprintf("conditional resource %q is a collection; index it before attribute access", identifier.Name))
+			if c.isConditionalResourceTarget(identifier.Name) {
 				return valueType{kind: valueDynamic}
 			}
 			if target := c.symbols[identifier.Name]; target != nil && target.kind == symbolModule && target.moduleContract != nil && target.valueType.kind == valueMap {
@@ -1965,6 +1964,9 @@ func (c *compiler) renderExpression(expression syntax.Expression) string {
 	case *syntax.ConditionalExpression:
 		return "(" + c.renderExpression(value.Condition) + " ? " + c.renderExpression(value.Then) + " : " + c.renderExpression(value.Else) + ")"
 	case *syntax.MemberExpression:
+		if identifier, ok := value.Target.(*syntax.IdentifierExpression); ok && c.isConditionalResourceTarget(identifier.Name) {
+			return "one(" + c.renderExpression(value.Target) + "[*]." + value.Name + ")"
+		}
 		target := c.renderExpression(value.Target)
 		targetType := c.checkExpression(value.Target)
 		if targetType.kind == valueObject {
@@ -2036,6 +2038,14 @@ func (c *compiler) renderFieldAccess(target syntax.Expression, name BindingName)
 		return rendered + "." + name.Wire
 	}
 	return rendered + "[" + quoteHCLString(name.Wire) + "]"
+}
+
+func (c *compiler) isConditionalResourceTarget(name string) bool {
+	symbol := c.symbols[name]
+	if symbol == nil || symbol.resource == nil || !symbol.resource.conditional {
+		return false
+	}
+	return symbol.kind == symbolResource || symbol.kind == symbolData
 }
 
 func literalBool(expression syntax.Expression) (bool, bool) {

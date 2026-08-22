@@ -168,7 +168,7 @@ resource dataVolume = lvm.logicalVolume("data", {
 }) when dataDiskSizeGib != null
 
 resource dataDiskResize = terraform.data("data_disk_resize", {
-  triggersReplace: [dataVolume[0].actual_size_bytes],
+  triggersReplace: [dataVolume.actual_size_bytes],
   connection: sshConnection,
   provisioner: [{
     "remote-exec": {
@@ -221,7 +221,7 @@ resource seedVolume = libvirt.volume("seed", {
   name: f"{hostname}-cloud-init.iso",
   pool: commonConfig.cloudinitPool,
   target: { format: { type: "iso" } },
-  create: { content: { url: seedDisk[0].path } },
+  create: { content: { url: seedDisk.path } },
 }) when ! adoptExisting
 
 resource vm = libvirt.domain("vm", {
@@ -279,7 +279,7 @@ resource vm = libvirt.domain("vm", {
       [{
         device: "cdrom",
         readOnly: true,
-        source: { file: { file: adoptExisting ? cloudinitIsoPath: seedVolume[0].path } },
+        source: { file: { file: adoptExisting ? cloudinitIsoPath: seedVolume.path } },
         target: {
           dev: "sda",
           bus: "sata"
@@ -301,7 +301,7 @@ resource vm = libvirt.domain("vm", {
 output hostname = vm.name with { description: "Created libvirt domain name." }
 output ip_address = ipAddress with { description: "Configured static guest IP address." }
 output disk_path = rootVolume.path with { description: "Host path of the LVM-managed root volume." }
-output data_disk_path = one([for volume in dataVolume: volume.path]) with {
+output data_disk_path = dataVolume.path with {
   description: "Host path of the optional LVM-managed data volume.",
 }
 output serial_console_enabled = serialConsoleEnabled with {

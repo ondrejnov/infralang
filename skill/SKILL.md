@@ -349,8 +349,12 @@ resource optional = terraform.data("optional", {
 ```
 
 `when` lowers to `count = condition ? 1 : 0`; it conflicts with explicit
-`count` and `forEach`. The result is collection-shaped and must be indexed
-before direct attribute access.
+`count` and `forEach`. The result is collection-shaped: direct attribute
+access `optional.output` is implicitly unwrapped to
+`one(terraform_data.optional[*].output)` and yields `null` while the condition
+is false. Indexing with `[0]`, iteration, and bare references keep collection
+behavior; prefer explicit indexing inside static traversal metadata such as
+`lifecycle.ignoreChanges`.
 
 Provider resource/data kind names use snake_case lowering, so
 `aws.s3Bucket(...)` becomes `aws_s3_bucket` and

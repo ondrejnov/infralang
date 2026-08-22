@@ -303,7 +303,7 @@ resource optional = terraform.data("optional", {
 }) when enabled
 ```
 
-`when condition` lowers to `count = condition ? 1 : 0`, conflicts with explicit `count` or `forEach`, and makes the resource collection-shaped. Index it before direct attribute access or iterate over it.
+`when condition` lowers to `count = condition ? 1 : 0`, conflicts with explicit `count` or `forEach`, and makes the resource collection-shaped. Direct attribute access `res.attr` is implicitly unwrapped to `one(res[*].attr)` and yields `null` while the condition is false; indexing with `[0]`, iteration, and bare references keep collection behavior. Prefer explicit indexing inside static traversal metadata such as `lifecycle.ignoreChanges`.
 
 ## Local Modules
 

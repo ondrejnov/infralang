@@ -637,6 +637,67 @@ output result = optional[0].output
 	}
 }
 
+func TestCompileConditionalResourceMemberUnwrap(t *testing.T) {
+	t.Parallel()
+
+	result := compileSource(t, `
+provider Terraform from "terraform.io/builtin/terraform"
+configure terraform = Terraform
+input enabled: bool = true
+resource optional = terraform.data("optional", { input: enabled }) when enabled
+output direct = optional.output
+output chained = optional.output.value
+let local = optional.output
+output viaLocal = f"{local}"
+`)
+	var document map[string]any
+	if err := json.Unmarshal(result, &document); err != nil {
+		t.Fatal(err)
+	}
+	outputs := document["output"].(map[string]any)
+	if got := outputs["direct"].(map[string]any)["value"]; got != "${one(terraform_data.optional[*].output)}" {
+		t.Errorf("direct output = %#v", got)
+	}
+	if got := outputs["chained"].(map[string]any)["value"]; got != "${one(terraform_data.optional[*].output).value}" {
+		t.Errorf("chained output = %#v", got)
+	}
+	if got := outputs["viaLocal"].(map[string]any)["value"]; got != "${local.local}" {
+		t.Errorf("template output = %#v", got)
+	}
+	locals := document["locals"].(map[string]any)
+	if locals["local"] != "${one(terraform_data.optional[*].output)}" {
+		t.Errorf("local = %#v", locals["local"])
+	}
+}
+
+func TestCompileConditionalResourceKeepsIndexAndIteration(t *testing.T) {
+	t.Parallel()
+
+	result := compileSource(t, `
+provider Terraform from "terraform.io/builtin/terraform"
+configure terraform = Terraform
+input enabled: bool = true
+resource optional = terraform.data("optional", { input: enabled }) when enabled
+output indexed = optional[0].output
+output iterated = [for item in optional: item.output]
+output bare = optional
+`)
+	var document map[string]any
+	if err := json.Unmarshal(result, &document); err != nil {
+		t.Fatal(err)
+	}
+	outputs := document["output"].(map[string]any)
+	if got := outputs["indexed"].(map[string]any)["value"]; got != `${terraform_data.optional[0].output}` {
+		t.Errorf("indexed output = %#v", got)
+	}
+	if got := outputs["iterated"].(map[string]any)["value"]; got != `${[for item in terraform_data.optional : item.output]}` {
+		t.Errorf("iterated output = %#v", got)
+	}
+	if got := outputs["bare"].(map[string]any)["value"]; got != "${terraform_data.optional}" {
+		t.Errorf("bare output = %#v", got)
+	}
+}
+
 func TestCompileRejectsInvalidConditionalResources(t *testing.T) {
 	t.Parallel()
 
@@ -650,12 +711,6 @@ resource optional = terraform.data("optional", {}) when "yes"
 provider Terraform from "terraform.io/builtin/terraform"
 configure terraform = Terraform
 resource optional = terraform.data("optional", {}) with { forEach: {} } when true
-`,
-		"direct member": `
-provider Terraform from "terraform.io/builtin/terraform"
-configure terraform = Terraform
-resource optional = terraform.data("optional", {}) when true
-output result = optional.output
 `,
 	}
 	for name, source := range tests {

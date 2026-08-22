@@ -152,8 +152,23 @@ resource optional = terraform.data("optional", {
 
 `when condition` lowers to Terraform `count = condition ? 1 : 0`. It conflicts
 with an explicit `count` or `forEach` on the same resource. A conditional
-resource is therefore collection-shaped; index it before direct attribute
-access, or iterate over it.
+resource is therefore collection-shaped: index it with `[0]` or iterate over
+it for exact collection semantics.
+
+Direct attribute access on a conditional resource is unwrapped implicitly and
+lowers to `one(resource[*].attribute)`, which yields `null` while the
+condition is false instead of failing with an out-of-range index:
+
+```infra
+output dataDiskPath = dataVolume.path
+# lowers to ${one(lvm_logical_volume.data[*].path)}
+```
+
+The unwrapped value is optional; combine it with `??` or `!= null` checks.
+Indexing, iteration, and bare references keep their collection behavior, so
+`dataVolume[0]`, `[for volume in dataVolume: ...]`, and `dependsOn` lists are
+unchanged. Prefer explicit indexing inside static traversal metadata such as
+`lifecycle.ignoreChanges`.
 
 ### Grouped raw moves
 
