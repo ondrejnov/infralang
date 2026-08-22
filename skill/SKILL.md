@@ -254,6 +254,32 @@ type Fleet = map<Machine>
 input machines: Fleet
 ```
 
+Compose reusable object contracts with `&`:
+
+```infra
+export type VmBase = object {
+  bridge: string,
+  mtu: number,
+}
+
+export type CommonConfig = VmBase & object {
+  gateway: string,
+  remoteHost: string,
+}
+```
+
+Each operand must be an `object { ... }` or an alias that resolves directly to
+an object. Composition can chain multiple operands, including aliases loaded
+with `import type`; scalar, collection, and wrapped types such as
+`optional<VmBase>` are invalid operands. Fields are combined from left to right,
+but composition never overrides a field: duplicate source names or duplicate
+Terraform wire names are rejected, even when their declarations are otherwise
+identical. Existing field aliases, optional markers, and defaults are retained.
+
+`&` composes type shapes at compile time; it does not merge runtime object
+values. Use object spreads such as `{ ...defaults, ...overrides }` when later
+values should replace earlier keys.
+
 Use `export type` only when another `.infra` file needs a type-only import.
 Defaults must be compile-time constants. Runtime inputs, locals, resources,
 modules, components, and function calls cannot be used in defaults.
