@@ -23,7 +23,7 @@ tmpdir="$(mktemp -d)"
 curl -fL https://github.com/ondrejnov/infralang/releases/latest/download/infralang-linux-amd64.tar.gz -o "$tmpdir/infralang.tar.gz"
 tar -xzf "$tmpdir/infralang.tar.gz" -C "$tmpdir"
 mkdir -p "$HOME/.local/bin"
-install -m 0755 "$tmpdir/infralang" "$HOME/.local/bin/infralang"
+install -m 0755 "$tmpdir/infralang-linux-amd64" "$HOME/.local/bin/infralang"
 export PATH="$HOME/.local/bin:$PATH"
 infralang version
 ```
@@ -79,7 +79,7 @@ the HashiCorp AWS provider and valid AWS credentials.
 - Terraform JSON generation with atomic output replacement
 - Source diagnostics with line and column information
 - Input source/wire aliases, object punning, concise validations, grouped raw moves, and conditional resources
-- Structural type aliases and composition, ordered object spreads, conditional let assignments, and checked local module interfaces
+- Structural type aliases and object type composition with `&`, ordered object spreads, conditional let assignments, and checked local module interfaces
 - Checked input forwarding with `...inputs(value)` and provider shorthand mappings
 - Exact compile-time constants, deterministic static declaration loops, and compile-time labels
 - Canonical type-only imports and directory-scoped reusable components
@@ -105,7 +105,7 @@ from a programming language without giving up the Terraform ecosystem:
 | **Basic structure** | Inputs, locals, resources, modules, and outputs use different block shapes and syntax. | The same small set of declarations and expressions is used throughout, such as `input`, `let`, `resource`, `module`, and `output`. |
 | **When errors appear** | Some mistakes are found only by `terraform validate` or `plan`, such as using a value with the wrong type. | `infralang check` catches unknown names, type mismatches, local module arguments, and provider mappings before Terraform runs, with a source location for each error. Terraform/OpenTofu still validates provider attributes. |
 | **Repeating configuration** | Reuse usually means a module with its own state address namespace or complex dynamic expressions. | `components` and `static for` expand repetition at compile time, without adding another state namespace. |
-| **Input interfaces** | Object requirements are spread across variable declarations and the places where modules are called. | Structural types, optional fields, validations, and checked `...inputs(value)` forwarding define one verifiable interface. |
+| **Input interfaces** | Object requirements are spread across variable declarations and call sites, and reusable object shapes must be repeated because HCL has no named type aliases or composition operator. | Named structural types compose reusable object contracts with `&`; optional fields, validations, and checked `...inputs(value)` forwarding keep the resulting interface verifiable. |
 | **Renaming code** | Renaming a resource label can change its state address even when the infrastructure itself is unchanged. | Source handles and explicit Terraform labels are separate, so readability refactors can preserve the state address. |
 
 The result is most noticeable beyond small configurations: less ceremony,
