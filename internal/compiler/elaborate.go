@@ -510,6 +510,41 @@ func (p *preparer) constType(expression *syntax.TypeExpression, visiting map[str
 	if expression == nil {
 		return valueType{kind: valueDynamic}
 	}
+	if len(expression.Operands) > 0 {
+		result := valueType{kind: valueObject}
+		type fieldOwner struct {
+			field   valueField
+			operand int
+		}
+		sourceFields := make(map[string]fieldOwner)
+		wireFields := make(map[string]fieldOwner)
+		for operandIndex, operand := range expression.Operands {
+			operandType := p.constType(operand, visiting)
+			objectOperand, resolvedName := p.isObjectCompositionOperand(operand, make(map[string]bool))
+			if !objectOperand {
+				p.addDiagnosticAt(operand, fmt.Sprintf("type composition operand must resolve directly to an object type, got %s", resolvedName))
+				continue
+			}
+			for _, field := range operandType.fields {
+				sourceConflict := false
+				if field.name.Source != "" {
+					if previous, exists := sourceFields[field.name.Source]; exists && previous.operand != operandIndex {
+						p.addDiagnosticSpan(previous.field.span, fmt.Sprintf("composed object type source field %q conflicts with another field", field.name.Source))
+						p.addDiagnosticSpan(field.span, fmt.Sprintf("composed object type source field %q conflicts with another field", field.name.Source))
+						sourceConflict = true
+					}
+					sourceFields[field.name.Source] = fieldOwner{field: field, operand: operandIndex}
+				}
+				if previous, exists := wireFields[field.name.Wire]; exists && previous.operand != operandIndex && !sourceConflict {
+					p.addDiagnosticSpan(previous.field.span, fmt.Sprintf("composed object type wire field %q conflicts with another field", field.name.Wire))
+					p.addDiagnosticSpan(field.span, fmt.Sprintf("composed object type wire field %q conflicts with another field", field.name.Wire))
+				}
+				wireFields[field.name.Wire] = fieldOwner{field: field, operand: operandIndex}
+			}
+			result.fields = append(result.fields, operandType.fields...)
+		}
+		return result
+	}
 	switch expression.Name {
 	case "string":
 		return valueType{kind: valueString}
@@ -546,7 +581,7 @@ func (p *preparer) constType(expression *syntax.TypeExpression, visiting map[str
 			if field.Quoted {
 				name.Source = ""
 			}
-			result.fields = append(result.fields, valueField{name: name, typeInfo: p.constType(field.Type, visiting), optional: field.Optional, defaulted: field.Default != nil})
+			result.fields = append(result.fields, valueField{name: name, typeInfo: p.constType(field.Type, visiting), optional: field.Optional, defaulted: field.Default != nil, span: field.GetSpan()})
 		}
 		return result
 	default:
@@ -565,6 +600,19 @@ func (p *preparer) constType(expression *syntax.TypeExpression, visiting map[str
 	}
 }
 
+func (p *preparer) isObjectCompositionOperand(expression *syntax.TypeExpression, visiting map[string]bool) (bool, string) {
+	if len(expression.Operands) > 0 || expression.Name == "object" {
+		return true, "object"
+	}
+	if alias := p.typeAliases[expression.Name]; alias != nil && !visiting[expression.Name] {
+		visiting[expression.Name] = true
+		valid, name := p.isObjectCompositionOperand(alias.Type, visiting)
+		delete(visiting, expression.Name)
+		return valid, name
+	}
+	return false, expression.Name
+}
+
 func (p *preparer) addDiagnostic(node syntax.Node, message string) {
 	p.addDiagnosticAt(node, message)
 }
@@ -574,6 +622,17 @@ func (p *preparer) addDiagnosticAt(node syntax.Node, message string) {
 		message += " [" + expansion + "]"
 	}
 	p.diagnostics = append(p.diagnostics, syntax.NewDiagnostic(node.GetFile(), node.GetSpan(), "COMPILE_TIME_ERROR", message))
+}
+
+func (p *preparer) addDiagnosticSpan(span syntax.Span, message string) {
+	file := span.File
+	if file == "" {
+		file = p.file.ID
+	}
+	if file == "" {
+		file = syntax.FileID(p.file.Name)
+	}
+	p.diagnostics = append(p.diagnostics, syntax.NewDiagnostic(file, span, "COMPILE_TIME_ERROR", message))
 }
 
 func canonicalIndex(value constValue, allowNumber bool) (string, bool) {

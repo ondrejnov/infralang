@@ -295,6 +295,24 @@ let config = {
 	}
 }
 
+func TestParseTypeComposition(t *testing.T) {
+	t.Parallel()
+
+	file, diagnostics := Parse("composition.infra", `
+type Combined = Base & object { enabled: bool } & object { labels: map<string> }
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("Parse() diagnostics = %v", diagnostics)
+	}
+	alias := file.Declarations[0].(*TypeAliasDeclaration)
+	if len(alias.Type.Operands) != 3 {
+		t.Fatalf("composition operands = %#v", alias.Type.Operands)
+	}
+	if alias.Type.Operands[0].Name != "Base" || alias.Type.Operands[1].Name != "object" || alias.Type.Operands[2].Fields[0].Type.Name != "map" {
+		t.Fatalf("composition = %#v", alias.Type)
+	}
+}
+
 func TestParseConditionalLetAssignments(t *testing.T) {
 	t.Parallel()
 

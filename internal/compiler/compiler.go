@@ -922,6 +922,9 @@ func (c *compiler) compileType(expression *syntax.TypeExpression) valueType {
 	if expression == nil {
 		return valueType{kind: valueDynamic}
 	}
+	if len(expression.Operands) > 0 {
+		return c.compileTypeComposition(expression)
+	}
 	switch expression.Name {
 	case "string":
 		c.expectTypeArgumentCount(expression, 0)
@@ -1013,6 +1016,57 @@ func (c *compiler) compileType(expression *syntax.TypeExpression) valueType {
 	}
 }
 
+func (c *compiler) compileTypeComposition(expression *syntax.TypeExpression) valueType {
+	result := valueType{kind: valueObject}
+	type fieldOwner struct {
+		field   valueField
+		operand int
+	}
+	sourceFields := make(map[string]fieldOwner)
+	wireFields := make(map[string]fieldOwner)
+	for operandIndex, operand := range expression.Operands {
+		operandType := c.compileType(operand)
+		objectOperand, resolvedName := c.isObjectCompositionOperand(operand, make(map[string]bool))
+		if !objectOperand {
+			c.addDiagnostic(operand.GetSpan(), fmt.Sprintf("type composition operand must resolve directly to an object type, got %s", resolvedName))
+			continue
+		}
+		result.sensitive = result.sensitive || operandType.sensitive
+		result.open = result.open || operandType.open
+		for _, field := range operandType.fields {
+			sourceConflict := false
+			if field.name.Source != "" {
+				if previous, exists := sourceFields[field.name.Source]; exists && previous.operand != operandIndex {
+					c.addDiagnostic(previous.field.span, fmt.Sprintf("composed object type source field %q conflicts with another field", field.name.Source))
+					c.addDiagnostic(field.span, fmt.Sprintf("composed object type source field %q conflicts with another field", field.name.Source))
+					sourceConflict = true
+				}
+				sourceFields[field.name.Source] = fieldOwner{field: field, operand: operandIndex}
+			}
+			if previous, exists := wireFields[field.name.Wire]; exists && previous.operand != operandIndex && !sourceConflict {
+				c.addDiagnostic(previous.field.span, fmt.Sprintf("composed object type wire field %q conflicts with another field", field.name.Wire))
+				c.addDiagnostic(field.span, fmt.Sprintf("composed object type wire field %q conflicts with another field", field.name.Wire))
+			}
+			wireFields[field.name.Wire] = fieldOwner{field: field, operand: operandIndex}
+			result.fields = append(result.fields, field)
+		}
+	}
+	return result
+}
+
+func (c *compiler) isObjectCompositionOperand(expression *syntax.TypeExpression, visiting map[string]bool) (bool, string) {
+	if len(expression.Operands) > 0 || expression.Name == "object" {
+		return true, "object"
+	}
+	if alias := c.typeAliases[expression.Name]; alias != nil && !visiting[expression.Name] {
+		visiting[expression.Name] = true
+		valid, name := c.isObjectCompositionOperand(alias.declaration.Type, visiting)
+		delete(visiting, expression.Name)
+		return valid, name
+	}
+	return false, expression.Name
+}
+
 func (c *compiler) compileAlias(name string, reference syntax.Span) valueType {
 	alias := c.typeAliases[name]
 	if alias == nil {
@@ -1067,6 +1121,9 @@ func (c *compiler) terraformTypeConstraint(expression *syntax.TypeExpression) an
 	if expression == nil {
 		return "any"
 	}
+	if len(expression.Operands) > 0 {
+		return c.terraformTypeConstraintString(expression, make(map[string]bool))
+	}
 	if alias := c.typeAliases[expression.Name]; alias != nil {
 		return c.terraformTypeConstraintString(alias.declaration.Type, map[string]bool{expression.Name: true})
 	}
@@ -1090,6 +1147,13 @@ func (c *compiler) terraformTypeConstraint(expression *syntax.TypeExpression) an
 }
 
 func (c *compiler) terraformTypeConstraintString(expression *syntax.TypeExpression, visiting map[string]bool) string {
+	if len(expression.Operands) > 0 {
+		fields, ok := c.terraformComposedObjectFields(expression, visiting)
+		if !ok {
+			return "any"
+		}
+		return "object({" + strings.Join(fields, ", ") + "})"
+	}
 	if alias := c.typeAliases[expression.Name]; alias != nil {
 		if visiting[expression.Name] {
 			return "any"
@@ -1141,6 +1205,58 @@ func (c *compiler) terraformTypeConstraintString(expression *syntax.TypeExpressi
 		arguments = append(arguments, c.terraformTypeConstraintString(argument, visiting))
 	}
 	return expression.Name + "(" + strings.Join(arguments, ", ") + ")"
+}
+
+func (c *compiler) terraformComposedObjectFields(expression *syntax.TypeExpression, visiting map[string]bool) ([]string, bool) {
+	if len(expression.Operands) > 0 {
+		var result []string
+		for _, operand := range expression.Operands {
+			fields, ok := c.terraformComposedObjectFields(operand, visiting)
+			if !ok {
+				return nil, false
+			}
+			result = append(result, fields...)
+		}
+		return result, true
+	}
+	if alias := c.typeAliases[expression.Name]; alias != nil {
+		if visiting[expression.Name] {
+			return nil, false
+		}
+		next := make(map[string]bool, len(visiting)+1)
+		for name, value := range visiting {
+			next[name] = value
+		}
+		next[expression.Name] = true
+		return c.terraformComposedObjectFields(alias.declaration.Type, next)
+	}
+	if expression.Name != "object" {
+		return nil, false
+	}
+	fields := make([]string, 0, len(expression.Fields))
+	for _, field := range expression.Fields {
+		constraint := c.terraformTypeConstraintString(field.Type, visiting)
+		if field.Optional {
+			if field.Default != nil {
+				constraint = "optional(" + constraint + ", " + renderConstant(field.Default) + ")"
+			} else {
+				constraint = "optional(" + constraint + ")"
+			}
+		}
+		wire := field.WireName
+		if wire == "" {
+			if field.Quoted {
+				wire = field.Name
+			} else {
+				wire = syntax.SourceNameToWire(field.Name)
+			}
+		}
+		if !syntax.IsTerraformIdentifier(wire) {
+			wire = quoteHCLString(wire)
+		}
+		fields = append(fields, wire+" = "+constraint)
+	}
+	return fields, true
 }
 
 func (c *compiler) checkExpression(expression syntax.Expression) valueType {

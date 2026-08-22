@@ -264,6 +264,7 @@ func (l *lexer) scanOperator(start Position) bool {
 		'!': TokenBang,
 		'<': TokenLess,
 		'>': TokenGreater,
+		'&': TokenAmpersand,
 		'?': TokenQuestion,
 	}
 	if kind, ok := oneCharacter[l.peek(0)]; ok {

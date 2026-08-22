@@ -33,6 +33,31 @@ export type HostConfig = PrivateConfig
 	}
 }
 
+func TestCompileResolvesExportedComposedTypeImport(t *testing.T) {
+	root := t.TempDir()
+	writeProjectFile(t, root, "main.infra", `
+import type { Config } from "./shared/types.infra"
+input config: Config = { hostName: "node", enabled: true }
+output hostName = config.hostName
+`)
+	writeProjectFile(t, root, "shared/types.infra", `
+type Base = object { hostName: string }
+export type Config = Base & object { enabled: bool }
+`)
+
+	result, err := Compile(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Diagnostics) != 0 || len(result.Artifacts) != 1 {
+		t.Fatalf("Compile() = artifacts %#v, diagnostics %v", result.Artifacts, result.Diagnostics)
+	}
+	artifact := string(result.Artifacts[0].Data)
+	if !strings.Contains(artifact, `object({host_name = string, enabled = bool})`) {
+		t.Fatalf("resolved composed type import output:\n%s", artifact)
+	}
+}
+
 func TestCompileSharesUnexportedAliasesWithinDirectory(t *testing.T) {
 	root := t.TempDir()
 	writeProjectFile(t, root, "main.infra", `input config: SharedConfig = { value: "ok" }`)

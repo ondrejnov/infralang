@@ -212,6 +212,7 @@ Inputs, constants, component parameters, and object fields support:
 - `optional<T>`
 - structural `object { ... }`
 - named aliases
+- object type composition with `&`
 
 ```infra
 export type Machine = object {
@@ -223,6 +224,26 @@ export type Machine = object {
 type Fleet = map<Machine>
 input machines: Fleet
 ```
+
+Object contracts can be composed without repeating shared fields:
+
+```infra
+type VmBase = object {
+  bridge: string,
+  mtu: number,
+}
+
+export type CommonConfig = VmBase & object {
+  gateway: string,
+  remoteHost: string,
+}
+```
+
+Every `&` operand must resolve directly to a structural object type; wrappers
+such as `optional<object { ... }>` are not composition operands. Fields are
+combined from left to right. Duplicate source names or Terraform wire names are
+rejected; composition does not override optionality, defaults, aliases, or field
+types.
 
 `type` is local to the directory module. `export type` additionally permits a
 type-only import from another file. Aliases are structural, not nominal: a

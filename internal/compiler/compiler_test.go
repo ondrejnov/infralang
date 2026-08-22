@@ -909,6 +909,100 @@ type HostConfig = object { hostName "host_name": string }
 	}
 }
 
+func TestCompileObjectTypeComposition(t *testing.T) {
+	t.Parallel()
+
+	result := compileSource(t, `
+type Base = object {
+  imageId "image_id": string,
+  retries?: number = 3,
+}
+type Config = Base & object { enabled: bool } & object { labels: map<string> }
+input config: Config = { imageId: "ami", enabled: true, labels: {} }
+output image = config.imageId
+output enabled = config.enabled
+`)
+	var document map[string]any
+	if err := json.Unmarshal(result, &document); err != nil {
+		t.Fatal(err)
+	}
+	config := document["variable"].(map[string]any)["config"].(map[string]any)
+	want := `object({image_id = string, retries = optional(number, 3), enabled = bool, labels = map(string)})`
+	if config["type"] != want {
+		t.Fatalf("composed Terraform type = %#v, want %q", config["type"], want)
+	}
+	defaultValue := config["default"].(map[string]any)
+	if defaultValue["retries"] != float64(3) {
+		t.Fatalf("composed optional default was not applied: %#v", defaultValue)
+	}
+}
+
+func TestCompileRejectsInvalidObjectTypeComposition(t *testing.T) {
+	t.Parallel()
+
+	file, parseDiagnostics := syntax.Parse("composition.infra", `
+type Base = object { value: string }
+type DuplicateSource = Base & object { value: number }
+type DuplicateWire = object { imageId: string } & object { image_id: string }
+type Scalar = string & object { enabled: bool }
+`)
+	if len(parseDiagnostics) != 0 {
+		t.Fatal(parseDiagnostics)
+	}
+	_, diagnostics := Compile(file)
+	if len(diagnostics) != 5 {
+		t.Fatalf("Compile() diagnostics = %v, want source, wire, and non-object composition errors", diagnostics)
+	}
+	joined := ""
+	for _, diagnostic := range diagnostics {
+		joined += diagnostic.Message + " "
+	}
+	for _, expected := range []string{"source field \"value\"", "wire field \"image_id\"", "must resolve directly to an object type, got string"} {
+		if !strings.Contains(joined, expected) {
+			t.Fatalf("composition diagnostics = %v, want %q", diagnostics, expected)
+		}
+	}
+}
+
+func TestCompileValidatesCompileTimeOnlyTypeCompositions(t *testing.T) {
+	t.Parallel()
+
+	file, parseDiagnostics := syntax.Parse("compile-time-composition.infra", `
+const duplicate: object { value: string } & object { value: string } = { value: "ok" }
+component Invalid(config: string & object { enabled: bool }) {}
+`)
+	if len(parseDiagnostics) != 0 {
+		t.Fatal(parseDiagnostics)
+	}
+	_, diagnostics := Compile(file)
+	if len(diagnostics) != 3 {
+		t.Fatalf("Compile() diagnostics = %v, want duplicate constant fields and invalid unused component parameter", diagnostics)
+	}
+	joined := ""
+	for _, diagnostic := range diagnostics {
+		joined += diagnostic.Message + " "
+	}
+	if !strings.Contains(joined, `source field "value"`) || !strings.Contains(joined, "got string") {
+		t.Fatalf("compile-time composition diagnostics = %v", diagnostics)
+	}
+}
+
+func TestCompileRejectsOptionalObjectCompositionOperand(t *testing.T) {
+	t.Parallel()
+
+	file, parseDiagnostics := syntax.Parse("optional-composition.infra", `
+type MaybeObject = optional<object { value: string }>
+input config: MaybeObject & object { enabled: bool }
+`)
+	if len(parseDiagnostics) != 0 {
+		t.Fatal(parseDiagnostics)
+	}
+	_, diagnostics := Compile(file)
+	if len(diagnostics) != 1 || !strings.Contains(diagnostics[0].Message, "got optional") {
+		t.Fatalf("Compile() diagnostics = %v, want optional object operand error", diagnostics)
+	}
+}
+
 func TestCompileRejectsInvalidTypeAliasesDeterministically(t *testing.T) {
 	t.Parallel()
 

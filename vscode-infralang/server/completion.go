@@ -9,8 +9,9 @@ import (
 )
 
 type completionType struct {
-	expression *syntax.TypeExpression
-	directory  string
+	expression       *syntax.TypeExpression
+	directory        string
+	fieldDirectories map[string]string
 }
 
 func (server *server) structuralArgumentCompletions(path, source string, offset int) ([]CompletionItem, bool) {
@@ -114,6 +115,9 @@ func completionFollowsColon(source string, offset int) bool {
 
 func (server *server) resolveCompletionType(value completionType, seen map[string]bool) completionType {
 	for value.expression != nil {
+		if len(value.expression.Operands) > 0 {
+			return server.resolveComposedCompletionType(value, seen)
+		}
 		switch value.expression.Name {
 		case "optional":
 			value = completionTypeArgument(value, 0)
@@ -172,6 +176,30 @@ func (server *server) resolveCompletionType(value completionType, seen map[strin
 	return completionType{}
 }
 
+func (server *server) resolveComposedCompletionType(value completionType, seen map[string]bool) completionType {
+	object := &syntax.TypeExpression{BaseNode: value.expression.BaseNode, Name: "object"}
+	fieldDirectories := make(map[string]string)
+	for _, operand := range value.expression.Operands {
+		operandSeen := make(map[string]bool, len(seen))
+		for name, included := range seen {
+			operandSeen[name] = included
+		}
+		resolved := server.resolveCompletionType(completionType{expression: operand, directory: value.directory}, operandSeen)
+		if resolved.expression == nil || resolved.expression.Name != "object" {
+			return completionType{}
+		}
+		object.Fields = append(object.Fields, resolved.expression.Fields...)
+		for _, field := range resolved.expression.Fields {
+			directory := resolved.directory
+			if nestedDirectory := resolved.fieldDirectories[field.WireName]; nestedDirectory != "" {
+				directory = nestedDirectory
+			}
+			fieldDirectories[field.WireName] = directory
+		}
+	}
+	return completionType{expression: object, directory: value.directory, fieldDirectories: fieldDirectories}
+}
+
 func completionTypeArgument(value completionType, index int) completionType {
 	if value.expression == nil || index >= len(value.expression.Arguments) {
 		return completionType{}
@@ -183,7 +211,11 @@ func completionObjectFieldType(value completionType, field *syntax.ObjectField) 
 	for i := range value.expression.Fields {
 		candidate := &value.expression.Fields[i]
 		if candidate.WireName == field.WireName {
-			return completionType{expression: candidate.Type, directory: value.directory}
+			directory := value.directory
+			if fieldDirectory := value.fieldDirectories[candidate.WireName]; fieldDirectory != "" {
+				directory = fieldDirectory
+			}
+			return completionType{expression: candidate.Type, directory: directory}
 		}
 	}
 	return completionType{}

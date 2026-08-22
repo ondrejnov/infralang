@@ -233,6 +233,35 @@ func TestCompletionUsesOverlayAndStructuralMembers(t *testing.T) {
 	}
 }
 
+func TestCompletionUsesComposedTypeMembers(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "main.infra")
+	writeTestFile(t, path, "input config: Config\n")
+	writeTestFile(t, filepath.Join(root, "base.infra"), `type Base = object { host: string }`)
+	writeTestFile(t, filepath.Join(root, "types.infra"), `
+type Config = Base & object { port: number }
+`)
+	workspace := newWorkspace()
+	workspace.setRoots([]string{root})
+	if err := workspace.scan(); err != nil {
+		t.Fatalf("scan workspace: %v", err)
+	}
+	source := `
+input config: Config
+output selected = config.
+`
+	uri := pathToURI(path)
+	if _, err := workspace.open(uri, source, 1); err != nil {
+		t.Fatalf("open overlay: %v", err)
+	}
+	labels := completionLabels((&server{workspace: workspace}).completions(TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: uri}, Position: positionAt(source, strings.Index(source, "config.")+len("config.")),
+	}))
+	if !labels["host"] || !labels["port"] {
+		t.Fatalf("composed type member completions = %v", labels)
+	}
+}
+
 func TestCompletionIncludesConditionalAssignmentKeyword(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "main.infra")
@@ -299,8 +328,10 @@ func TestCompletionUsesNestedImportedStructuralTypes(t *testing.T) {
 	path := filepath.Join(root, "main.infra")
 	writeTestFile(t, filepath.Join(root, "types.infra"), `
 import type { VmConfig } from "./child/types.infra"
-type HostDefinition = object {
+type HostBase = object {
   gateway: string,
+}
+type HostDefinition = HostBase & object {
   vms: map<VmConfig>,
 }
 `)

@@ -412,6 +412,18 @@ func (resolver *importResolver) expandType(expression *syntax.TypeExpression, di
 	if expression == nil {
 		return nil, true
 	}
+	if len(expression.Operands) > 0 {
+		result := &syntax.TypeExpression{BaseNode: expression.BaseNode}
+		valid := true
+		for _, operand := range expression.Operands {
+			expanded, ok := resolver.expandType(operand, directory)
+			valid = valid && ok
+			if expanded != nil {
+				result.Operands = append(result.Operands, expanded)
+			}
+		}
+		return result, valid
+	}
 	if !isProjectBuiltinType(expression.Name) {
 		symbol := directory.symbols[expression.Name]
 		if symbol == nil {
@@ -510,6 +522,9 @@ func cloneImportedType(expression *syntax.TypeExpression) *syntax.TypeExpression
 	result := &syntax.TypeExpression{BaseNode: expression.BaseNode, Name: expression.Name}
 	for _, argument := range expression.Arguments {
 		result.Arguments = append(result.Arguments, cloneImportedType(argument))
+	}
+	for _, operand := range expression.Operands {
+		result.Operands = append(result.Operands, cloneImportedType(operand))
 	}
 	for _, field := range expression.Fields {
 		field.Type = cloneImportedType(field.Type)

@@ -41,6 +41,7 @@ type symbol struct {
 	TerraformKind  string
 	Fields         map[string]*symbol
 	Expression     syntax.Expression
+	Type           *syntax.TypeExpression
 }
 
 func (item *symbol) location() Location {
@@ -281,6 +282,8 @@ func indexDeclarations(index *fileIndex, declarations []syntax.Declaration, cont
 		case *syntax.TypeAliasDeclaration:
 			item = newSymbol(index, value.Name, symbolKindStruct, "type", typeDetail(value.Type), value, container)
 			item.Fields = fieldsFromType(index, value.Type, item.Name)
+			item.Target = referencedTypeName(value.Type)
+			item.Type = value.Type
 		case *syntax.TypeImportDeclaration:
 			for i := range value.Items {
 				imported := &value.Items[i]
@@ -316,6 +319,8 @@ func indexDeclarations(index *fileIndex, declarations []syntax.Declaration, cont
 				parameter := &value.Parameters[i]
 				child := newNodeSymbol(index, parameter.Name, symbolKindVariable, "parameter", typeDetail(parameter.Type), parameter, value.Name)
 				child.Fields = fieldsFromType(index, parameter.Type, parameter.Name)
+				child.Target = referencedTypeName(parameter.Type)
+				child.Type = parameter.Type
 				index.Symbols = append(index.Symbols, child)
 			}
 			for i := range value.Providers {
@@ -339,6 +344,8 @@ func indexDeclarations(index *fileIndex, declarations []syntax.Declaration, cont
 		case *syntax.InputDeclaration:
 			item = newSymbol(index, value.Name, symbolKindVariable, "input", "input "+typeDetail(value.Type), value, container)
 			item.Fields = fieldsFromType(index, value.Type, item.Name)
+			item.Target = referencedTypeName(value.Type)
+			item.Type = value.Type
 		case *syntax.LetDeclaration:
 			item = newSymbol(index, value.Name, symbolKindVariable, "let", "local value", value, container)
 			item.Fields = fieldsFromExpression(index, value.Value, item.Name)
@@ -405,7 +412,34 @@ func selectionRange(source string, span syntax.Span, name string) Range {
 }
 
 func fieldsFromType(index *fileIndex, expression *syntax.TypeExpression, container string) map[string]*symbol {
-	if expression == nil || expression.Name != "object" {
+	return fieldsFromTypeSeen(index, expression, container, make(map[string]bool))
+}
+
+func fieldsFromTypeSeen(index *fileIndex, expression *syntax.TypeExpression, container string, seen map[string]bool) map[string]*symbol {
+	if expression == nil {
+		return nil
+	}
+	if len(expression.Operands) > 0 {
+		result := make(map[string]*symbol)
+		for _, operand := range expression.Operands {
+			for name, field := range fieldsFromTypeSeen(index, operand, container, seen) {
+				result[name] = field
+			}
+		}
+		return result
+	}
+	if expression.Name != "object" {
+		if seen[expression.Name] {
+			return nil
+		}
+		seen[expression.Name] = true
+		defer delete(seen, expression.Name)
+		for _, declaration := range index.File.Declarations {
+			alias, ok := declaration.(*syntax.TypeAliasDeclaration)
+			if ok && alias.Name == expression.Name {
+				return fieldsFromTypeSeen(index, alias.Type, container, seen)
+			}
+		}
 		return nil
 	}
 	result := make(map[string]*symbol)
@@ -415,7 +449,9 @@ func fieldsFromType(index *fileIndex, expression *syntax.TypeExpression, contain
 			continue
 		}
 		item := newNodeSymbol(index, field.Name, symbolKindProperty, "field", typeDetail(field.Type), field, container)
-		item.Fields = fieldsFromType(index, field.Type, container+"."+field.Name)
+		item.Fields = fieldsFromTypeSeen(index, field.Type, container+"."+field.Name, seen)
+		item.Target = referencedTypeName(field.Type)
+		item.Type = field.Type
 		result[field.Name] = item
 	}
 	return result
@@ -443,6 +479,13 @@ func typeDetail(expression *syntax.TypeExpression) string {
 	if expression == nil {
 		return "dynamic"
 	}
+	if len(expression.Operands) > 0 {
+		parts := make([]string, 0, len(expression.Operands))
+		for _, operand := range expression.Operands {
+			parts = append(parts, typeDetail(operand))
+		}
+		return strings.Join(parts, " & ")
+	}
 	if len(expression.Arguments) == 0 {
 		return expression.Name
 	}
@@ -451,6 +494,13 @@ func typeDetail(expression *syntax.TypeExpression) string {
 		parts = append(parts, typeDetail(argument))
 	}
 	return expression.Name + "<" + strings.Join(parts, ", ") + ">"
+}
+
+func referencedTypeName(expression *syntax.TypeExpression) string {
+	if expression == nil || len(expression.Operands) > 0 || expression.Name == "object" || len(expression.Arguments) > 0 {
+		return ""
+	}
+	return expression.Name
 }
 
 func componentDetail(definition *syntax.ComponentDefinition) string {

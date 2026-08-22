@@ -133,6 +133,7 @@ const (
 	TokenGreaterEqual
 	TokenAnd
 	TokenOr
+	TokenAmpersand
 	TokenCoalesce
 	TokenQuestion
 )
@@ -184,6 +185,7 @@ func (k TokenKind) String() string {
 		TokenGreaterEqual: ">=",
 		TokenAnd:          "&&",
 		TokenOr:           "||",
+		TokenAmpersand:    "&",
 		TokenCoalesce:     "??",
 		TokenQuestion:     "?",
 	}

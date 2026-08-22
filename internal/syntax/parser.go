@@ -459,6 +459,27 @@ func (p *parser) parseInputDeclaration() Declaration {
 }
 
 func (p *parser) parseTypeExpression() *TypeExpression {
+	first := p.parsePrimaryTypeExpression()
+	if first == nil || !p.match(TokenAmpersand) {
+		return first
+	}
+	operands := []*TypeExpression{first}
+	for {
+		operand := p.parsePrimaryTypeExpression()
+		if operand == nil {
+			return first
+		}
+		operands = append(operands, operand)
+		if !p.match(TokenAmpersand) {
+			return &TypeExpression{
+				BaseNode: p.base(first.GetSpan().Start, operand.GetSpan().End),
+				Operands: operands,
+			}
+		}
+	}
+}
+
+func (p *parser) parsePrimaryTypeExpression() *TypeExpression {
 	name := p.expect(TokenIdentifier, "expected type name")
 	if name.Kind != TokenIdentifier {
 		return nil

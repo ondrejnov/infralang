@@ -499,6 +499,9 @@ func (p *preparer) rewriteType(expression *syntax.TypeExpression) *syntax.TypeEx
 	for index, argument := range expression.Arguments {
 		expression.Arguments[index] = p.rewriteType(argument)
 	}
+	for index, operand := range expression.Operands {
+		expression.Operands[index] = p.rewriteType(operand)
+	}
 	for index, field := range expression.Fields {
 		field.Type = p.rewriteType(field.Type)
 		field.Default = p.rewriteExpression(field.Default)
@@ -744,6 +747,9 @@ func cloneType(expression *syntax.TypeExpression, environment *staticEnv, expans
 	result := &syntax.TypeExpression{BaseNode: cloneBase(expression.BaseNode, expansion), Name: expression.Name}
 	for _, argument := range expression.Arguments {
 		result.Arguments = append(result.Arguments, cloneType(argument, environment, expansion))
+	}
+	for _, operand := range expression.Operands {
+		result.Operands = append(result.Operands, cloneType(operand, environment, expansion))
 	}
 	for _, field := range expression.Fields {
 		field.BaseNode = cloneBase(field.BaseNode, expansion)

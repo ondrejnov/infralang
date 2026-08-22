@@ -187,6 +187,22 @@ type Fleet = map<Machine>
 input machines: Fleet
 ```
 
+Object aliases can compose shared structural contracts. Every operand must
+resolve directly to an object (without wrappers such as `optional`), and
+duplicate source or wire fields are rejected:
+
+```infra
+export type VmBase = object {
+  bridge: string,
+  mtu: number,
+}
+
+export type CommonConfig = VmBase & object {
+  gateway: string,
+  remoteHost: string,
+}
+```
+
 `type` is local to the directory module. `export type` can be imported with `import type`. Alias cycles and duplicate source or wire fields are rejected.
 
 Input defaults and optional object-field defaults must reduce to compile-time constants. References to `const` values are allowed; runtime inputs, locals, resources, modules, component instances, Terraform functions, and other runtime values are not. Object-field defaults require `?`.

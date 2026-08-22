@@ -79,7 +79,7 @@ the HashiCorp AWS provider and valid AWS credentials.
 - Terraform JSON generation with atomic output replacement
 - Source diagnostics with line and column information
 - Input source/wire aliases, object punning, concise validations, grouped raw moves, and conditional resources
-- Structural type aliases, ordered object spreads, conditional let assignments, and checked local module interfaces
+- Structural type aliases and composition, ordered object spreads, conditional let assignments, and checked local module interfaces
 - Checked input forwarding with `...inputs(value)` and provider shorthand mappings
 - Exact compile-time constants, deterministic static declaration loops, and compile-time labels
 - Canonical type-only imports and directory-scoped reusable components

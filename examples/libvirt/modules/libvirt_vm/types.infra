@@ -1,19 +1,22 @@
-export type CommonConfig = object {
+export type VmBase = object {
   baseImagePath "base_image_path": string,
   bootstrapRoot "bootstrap_root": string,
   bridge: string,
   cloudinitDirectory "cloudinit_directory": string,
   cloudinitPool "cloudinit_pool": string,
-  gateway: string,
   interfaceName "interface_name": string,
   mtu: number,
   prefixLength "prefix_length": number,
-  remoteHost "remote_host": string,
   remoteCertificatePath "remote_certificate_path"?: string = "~/.ssh/id_rsa-cert.pub",
   remotePrivateKeyPath "remote_private_key_path"?: string = "~/.ssh/id_rsa",
   remoteUser "remote_user"?: string = "root",
   sshAuthorizedKeys "ssh_authorized_keys": list<string>,
   volumeGroup "volume_group": string,
+}
+
+export type CommonConfig = VmBase & object {
+  gateway: string,
+  remoteHost "remote_host": string,
 }
 
 export type SetupFile = object {

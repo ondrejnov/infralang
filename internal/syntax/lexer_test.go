@@ -70,3 +70,18 @@ func TestLexPhaseOneTokens(t *testing.T) {
 		t.Errorf("raw address = %q", tokens[2].Lexeme)
 	}
 }
+
+func TestLexTypeCompositionOperator(t *testing.T) {
+	t.Parallel()
+
+	tokens, diagnostics := Lex("types.infra", `type Combined = Base & object { enabled: bool }`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("Lex() diagnostics = %v", diagnostics)
+	}
+	for _, token := range tokens {
+		if token.Kind == TokenAmpersand {
+			return
+		}
+	}
+	t.Fatal("Lex() did not return a type composition operator")
+}

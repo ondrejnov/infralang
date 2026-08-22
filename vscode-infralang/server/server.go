@@ -352,10 +352,31 @@ func (server *server) moduleOutputs(directory string, instance *symbol) map[stri
 }
 
 func (server *server) members(directory string, root *symbol) map[string]*symbol {
+	return server.membersSeen(directory, root, make(map[*symbol]bool))
+}
+
+func (server *server) membersSeen(directory string, root *symbol, seen map[*symbol]bool) map[string]*symbol {
+	if root == nil || seen[root] {
+		return nil
+	}
+	seen[root] = true
+	if root.Type != nil {
+		if fields := server.typeMembers(root); len(fields) > 0 {
+			return fields
+		}
+	}
 	if len(root.Fields) > 0 {
 		return root.Fields
 	}
 	switch root.Category {
+	case "input", "parameter", "field", "type":
+		if root.Target != "" {
+			targetDirectory := directory
+			if root.Path != "" {
+				targetDirectory = filepath.Dir(root.Path)
+			}
+			return server.membersSeen(targetDirectory, server.visibleSymbols(targetDirectory)[root.Target], seen)
+		}
 	case "componentInstance":
 		if component := server.findComponent(directory, root.Target); component != nil {
 			return component.Fields
@@ -364,6 +385,33 @@ func (server *server) members(directory string, root *symbol) map[string]*symbol
 		return server.moduleOutputs(directory, root)
 	}
 	return nil
+}
+
+func (server *server) typeMembers(root *symbol) map[string]*symbol {
+	directory := filepath.Dir(root.Path)
+	resolved := server.resolveCompletionType(completionType{expression: root.Type, directory: directory}, make(map[string]bool))
+	if resolved.expression == nil || resolved.expression.Name != "object" {
+		return nil
+	}
+	result := make(map[string]*symbol)
+	for i := range resolved.expression.Fields {
+		field := &resolved.expression.Fields[i]
+		if field.Quoted {
+			continue
+		}
+		index := server.workspace.file(string(field.GetFile()))
+		if index == nil {
+			index = server.workspace.file(root.Path)
+		}
+		if index == nil {
+			continue
+		}
+		item := newNodeSymbol(index, field.Name, symbolKindProperty, "field", typeDetail(field.Type), field, root.Name)
+		item.Target = referencedTypeName(field.Type)
+		item.Type = field.Type
+		result[field.Name] = item
+	}
+	return result
 }
 
 func (server *server) resolveMemberPath(directory string, visible map[string]*symbol, path []string) *symbol {

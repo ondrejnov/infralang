@@ -1,6 +1,6 @@
 ---
 name: infralang
-description: InfraLang and .infra files: create, explain, review, debug, compile, and validate InfraLang infrastructure code and its Terraform JSON output. Use for InfraLang syntax, types, constants, static loops, components, providers, resources, data sources, modules, inputs, outputs, moved state, or changes to the lexer, parser, compiler, project loader, or CLI.
+description: Use when creating, editing, reviewing, explaining, compiling, or debugging InfraLang files (`.infra`, `types.infra`) or their generated Terraform JSON (`.tf.json`); when using the `infralang` CLI; when working with InfraLang types, inputs, constants, static loops, components, providers, resources, data sources, modules, outputs, moved state, project loading, or compiler/parser changes. Do not use for ordinary Terraform/OpenTofu HCL unless the task also changes or converts InfraLang source.
 ---
 
 # InfraLang
@@ -23,10 +23,12 @@ assume that project files or project examples are available.
 - Treat `.infra` as the source of truth. Do not hand-edit generated `.tf.json`.
 - Before editing a module, inspect every immediate `.infra` file in its directory. All such files form one InfraLang module.
 - Inspect local child modules, imported type files, provider mappings, and existing Terraform files that define the boundary around the change.
+- Prefer reusable and shared type aliases in a sibling `types.infra` file. Mark exported aliases with `export type` and use explicit `import type { ... } from "./types.infra"` at every consumer; keep a type in the main file only when it is intentionally local to one use.
 - Preserve explicit Terraform resource, data, and module labels, provider aliases, module sources, and `moved` addresses unless changing state identity is intentional.
 - Prefer the smallest source change that satisfies the request.
 - Run `infralang check` after source changes. Build only when generated Terraform JSON is needed.
 - Run `terraform validate` or `tofu validate` when provider attributes, remote modules, or Terraform semantics are involved. `infralang check` does not replace it.
+- Keep new configuration values in `.infra` `input` declarations and compile-time defaults. Do not create or rely on `.tfvars` files for new configurations unless an existing project workflow explicitly requires external overrides or the user explicitly requests them.
 - Do not run `terraform apply` or `tofu apply` without explicit user approval for the real infrastructure change.
 - Never put credentials, private keys, tokens, or secret values in `.infra` source or in assistant output.
 - Treat `terraform init`, provider installation, plans, state access, and storage examples as environment-affecting operations.
@@ -59,20 +61,20 @@ InfraLang changes the authoring syntax and adds static/compile-time checks; it
 does not invent a second infrastructure runtime. The compiler emits Terraform
 JSON, which has the same meaning as the equivalent HCL below.
 
-| InfraLang | Terraform concept | Typical Terraform address or reference |
-| --- | --- | --- |
-| `terraform { ... }` | `terraform` settings and `required_providers` | configuration metadata |
-| `provider AWS from "hashicorp/aws" ...` | an entry in `required_providers` | provider source identity |
-| `input region: string` | `variable "region"` | `var.region` |
-| `let name = expression` | `locals { name = expression }` | `local.name` |
-| `configure aws = AWS({ ... })` | `provider "aws" { ... }` | provider configuration, not a resource address |
-| `data item = aws.method("label", ...)` | `data "aws_type" "label" { ... }` | `data.aws_type.label` |
-| `resource item = aws.method("label", ...)` | `resource "aws_type" "label" { ... }` | `aws_type.label` |
-| `import module Child from "source"` | no emitted block | compile-time import only |
-| `module child = Child("label", ...)` | `module "label" { source = "source" ... }` | `module.label` |
-| `output value = expression` | `output "value" { value = expression }` | root output |
-| `moved ...` | `moved { from = ... to = ... }` | state migration metadata |
-| `type`, `const`, `static for`, `component`, `instantiate` | no direct Terraform block | expanded or erased before JSON |
+| InfraLang                                                 | Terraform concept                             | Typical Terraform address or reference         |
+| --------------------------------------------------------- | --------------------------------------------- | ---------------------------------------------- |
+| `terraform { ... }`                                       | `terraform` settings and `required_providers` | configuration metadata                         |
+| `provider AWS from "hashicorp/aws" ...`                   | an entry in `required_providers`              | provider source identity                       |
+| `input region: string`                                    | `variable "region"`                           | `var.region`                                   |
+| `let name = expression`                                   | `locals { name = expression }`                | `local.name`                                   |
+| `configure aws = AWS({ ... })`                            | `provider "aws" { ... }`                      | provider configuration, not a resource address |
+| `data item = aws.method("label", ...)`                    | `data "aws_type" "label" { ... }`             | `data.aws_type.label`                          |
+| `resource item = aws.method("label", ...)`                | `resource "aws_type" "label" { ... }`         | `aws_type.label`                               |
+| `import module Child from "source"`                       | no emitted block                              | compile-time import only                       |
+| `module child = Child("label", ...)`                      | `module "label" { source = "source" ... }`    | `module.label`                                 |
+| `output value = expression`                               | `output "value" { value = expression }`       | root output                                    |
+| `moved ...`                                               | `moved { from = ... to = ... }`               | state migration metadata                       |
+| `type`, `const`, `static for`, `component`, `instantiate` | no direct Terraform block                     | expanded or erased before JSON                 |
 
 For example, this InfraLang:
 
@@ -279,11 +281,6 @@ use `{{` and `}}` for literal braces inside formatted strings.
 
 Object items are evaluated from left to right. Later fields or spreads override
 earlier wire keys. `{ region }` is shorthand for `{ region: region }`.
-`field: value when condition` conditionally contributes one field;
-`if (condition) { name = value }` conditionally updates a previously declared
-`let`. Its body accepts assignments only, and a target reference means the
-value before the assignment. Keep declarations outside and use resource `when`
-for optional resources.
 
 ## Providers, Resources, and Data Sources
 

@@ -58,6 +58,7 @@ type TypeExpression struct {
 	Name      string
 	Arguments []*TypeExpression
 	Fields    []TypeField
+	Operands  []*TypeExpression
 }
 
 type TypeAliasDeclaration struct {
