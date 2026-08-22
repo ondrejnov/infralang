@@ -521,6 +521,7 @@ particular installation layout.
 infralang version
 infralang check path/to/main.infra
 infralang check path/to/module-directory
+infralang fmt path/to/main.infra
 infralang build path/to/main.infra
 infralang build path/to/module-directory
 infralang build -stdout path/to/main.infra
@@ -530,7 +531,8 @@ infralang build -o generated.tf.json path/to/main.infra
 For a single file, `build` writes a sibling `.tf.json` by default. For a module
 directory, it writes `main.tf.json` for each compiled module. `-stdout` and
 `-o` apply only to single-file builds and are mutually exclusive. Put flags
-before the source path.
+before the source path. `fmt` atomically formats one valid `.infra` file in
+place and prints the filename when the file changed.
 
 The commands `infralang init`, `infralang validate`, `infralang plan`,
 `infralang apply`, and `infralang destroy` compile the current directory first,

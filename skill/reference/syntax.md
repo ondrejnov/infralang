@@ -206,10 +206,11 @@ resource vm = libvirt.domain("vm", {
 }
 ```
 
-For `map<T>`, `each.key` is `string` and `each.value` is `T`. For
-`set<T>`, both use `T`. A runtime `forEach` cannot use `each` in its own
-expression. `each` is unavailable outside the declaration. `count.index` is
-not currently installed by InfraLang.
+For `map<T>`, `each.key` is `string` and `each.value` is `T`. Runtime
+`forEach` also accepts objects and `set<string>` (where both fields are
+`string`); other set element types are rejected. A runtime `forEach` cannot use
+`each` in its own expression. `each` is unavailable outside the declaration.
+`count.index` is not currently installed by InfraLang.
 
 `when condition` is shorthand for a conditional resource collection using
 `count`. It cannot be combined with explicit `count` or `forEach`.
