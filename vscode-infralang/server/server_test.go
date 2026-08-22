@@ -233,6 +233,22 @@ func TestCompletionUsesOverlayAndStructuralMembers(t *testing.T) {
 	}
 }
 
+func TestCompletionIncludesConditionalAssignmentKeyword(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "main.infra")
+	workspace := newWorkspace()
+	uri := pathToURI(path)
+	if _, err := workspace.open(uri, "", 1); err != nil {
+		t.Fatalf("open document: %v", err)
+	}
+	labels := completionLabels((&server{workspace: workspace}).completions(TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: uri}, Position: Position{},
+	}))
+	if !labels["if"] {
+		t.Fatalf("top-level completions omit conditional assignment keyword: %v", labels)
+	}
+}
+
 func TestCompletionUsesComponentScope(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "component.infra")
@@ -401,8 +417,8 @@ resource bucket = aws.s3Bucket("bucket", {
 	if !labels["bucketPrefix"] {
 		t.Fatalf("schema completion missing camelCase attribute: %v", labels)
 	}
-	if labels["id"] {
-		t.Fatalf("computed-only attribute was offered as a resource argument: %v", labels)
+	if labels["id"] || labels["if"] {
+		t.Fatalf("non-resource-key completion was offered as a resource argument: %v", labels)
 	}
 
 	memberSource := source + "\noutput bucketId = bucket."

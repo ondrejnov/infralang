@@ -124,6 +124,13 @@ let values = [for name, item in items: item.value if item.enabled]
 let index = {for name, item in items: name => item.id}
 let merged = { ...base, region, retries: 3 }
 let conditional = { debug: true when debugEnabled }
+if (credentials != null) {
+  merged = {
+    ...merged,
+    username: credentials.username,
+    password: credentials.password,
+  }
+}
 let rendered = yamlencode(merged)
 ```
 
@@ -131,7 +138,10 @@ Object punning (`{ region }`) is equivalent to `{ region: region }`. Spreads
 and fields are applied left to right; later values win. `field: value when
 condition` requires a boolean condition. A compile-time false condition removes
 the field during preparation; a runtime condition lowers using Terraform merge
-semantics.
+semantics. `if (condition) { name = value }` conditionally updates a previously
+declared `let`; its body accepts assignments only. A target reference in the
+right-hand side means the value before that assignment. Use resource `when`
+rather than placing resource declarations inside `if`.
 
 Operator precedence from lowest to highest is conditional, `??`, `||`, `&&`,
 equality, ordering, `+`/`-`, `*`/`/`/`%`, unary, then member/index/call postfix

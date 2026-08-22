@@ -331,6 +331,11 @@ func (p *preparer) rewriteDeclaration(declaration syntax.Declaration) {
 		value.MetadataItems = rewriteMetadataItems(value.MetadataItems, p)
 	case *syntax.LetDeclaration:
 		value.Value = p.rewriteExpression(value.Value)
+	case *syntax.IfDeclaration:
+		value.Condition = p.rewriteExpression(value.Condition)
+		for index := range value.Assignments {
+			value.Assignments[index].Value = p.rewriteExpression(value.Assignments[index].Value)
+		}
 	case *syntax.ConfigureDeclaration:
 		value.Alias = p.rewriteExpression(value.Alias)
 		value.Config = p.rewriteObject(value.Config)
@@ -575,6 +580,17 @@ func cloneDeclaration(declaration syntax.Declaration, environment *staticEnv, ex
 		return &result
 	case *syntax.LetDeclaration:
 		return &syntax.LetDeclaration{BaseNode: cloneBase(value.BaseNode, expansion), Name: value.Name, Value: cloneExpression(value.Value, environment, expansion)}
+	case *syntax.IfDeclaration:
+		result := &syntax.IfDeclaration{
+			BaseNode:  cloneBase(value.BaseNode, expansion),
+			Condition: cloneExpression(value.Condition, environment, expansion),
+		}
+		for _, assignment := range value.Assignments {
+			assignment.BaseNode = cloneBase(assignment.BaseNode, expansion)
+			assignment.Value = cloneExpression(assignment.Value, environment, expansion)
+			result.Assignments = append(result.Assignments, assignment)
+		}
+		return result
 	case *syntax.ConfigureDeclaration:
 		result := *value
 		result.BaseNode = cloneBase(value.BaseNode, expansion)

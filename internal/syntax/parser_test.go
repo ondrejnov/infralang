@@ -295,6 +295,40 @@ let config = {
 	}
 }
 
+func TestParseConditionalLetAssignments(t *testing.T) {
+	t.Parallel()
+
+	file, diagnostics := Parse("if.infra", `
+input enabled: bool = true
+let config = { if: "ordinary field", stableValue: true }
+let copy = config
+if (enabled && copy.stableValue) {
+  config = {
+    ...config,
+    password: "secret",
+  }
+  copy = config
+}
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("Parse() diagnostics = %v", diagnostics)
+	}
+	if len(file.Declarations) != 4 {
+		t.Fatalf("declarations = %#v", file.Declarations)
+	}
+	config := file.Declarations[1].(*LetDeclaration).Value.(*ObjectExpression)
+	if config.Fields[0].Name != "if" {
+		t.Fatalf("ordinary if field = %#v", config.Fields[0])
+	}
+	conditional := file.Declarations[3].(*IfDeclaration)
+	if len(conditional.Assignments) != 2 || conditional.Assignments[0].Name != "config" || conditional.Assignments[1].Name != "copy" {
+		t.Fatalf("if assignments = %#v", conditional.Assignments)
+	}
+	if condition, ok := conditional.Condition.(*BinaryExpression); !ok || condition.Operator != TokenAnd {
+		t.Fatalf("if condition = %#v", conditional.Condition)
+	}
+}
+
 func TestParseRejectsMalformedPhaseTwoItems(t *testing.T) {
 	t.Parallel()
 
@@ -304,6 +338,10 @@ func TestParseRejectsMalformedPhaseTwoItems(t *testing.T) {
 		"missing field condition":  `let value = { field: 1 when, }`,
 		"missing alias assignment": `type Config object { value: string }`,
 		"conditional pun":          `let value = { field when true, }`,
+		"missing if parentheses":   `let value = 1; if true { value = 2 }`,
+		"empty if body":            `let value = 1; if (true) {}`,
+		"declaration in if":        `let value = 1; if (true) { resource item = provider.kind("item", {}) }`,
+		"object field in if":       `let value = 1; if (true) { value: 2 }`,
 	}
 	for name, source := range tests {
 		t.Run(name, func(t *testing.T) {

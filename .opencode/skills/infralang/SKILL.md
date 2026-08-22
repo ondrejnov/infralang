@@ -239,11 +239,21 @@ let config = {
   memory: 2048,
   qemuGuestAgentEnabled: true when installAgent,
 }
+
+if (rootPassword != null) {
+  config = {
+    ...config,
+    password: rootPassword,
+    chpasswd: { expire: false },
+  }
+}
 ```
 
 - `{ region }` is object punning for `{ region: region }`.
 - `...value` requires an object-compatible value.
 - `field: value when condition` conditionally contributes a field and requires a boolean condition.
+- `if (condition) { name = value }` conditionally updates a previously declared `let`; only assignments are accepted and target references mean the previous value.
+- Resource, module, data, and other declarations are not accepted in `if`; use resource `when` for optional resources.
 - Compile-time false fields disappear during preparation; runtime conditions lower through Terraform merge semantics.
 
 Operator precedence from lowest to highest is conditional, `??`, `||`, `&&`, equality, ordering, `+`/`-`, `*`/`/`/`%`, unary, then member/index/call postfix operations.

@@ -143,6 +143,14 @@ func (expander *componentExpander) validateDefinition(definition *syntax.Compone
 			} else {
 				internalNames[name] = declaration
 			}
+		case *syntax.IfDeclaration:
+			for index := range value.Assignments {
+				assignment := &value.Assignments[index]
+				if _, ok := internalNames[assignment.Name].(*syntax.LetDeclaration); !ok {
+					expander.preparer.addDiagnostic(assignment, fmt.Sprintf("if assignment target %q must refer to a previously declared component let", assignment.Name))
+					expander.invalid[definition.Name] = true
+				}
+			}
 		default:
 			expander.preparer.addDiagnostic(declaration, fmt.Sprintf("declaration %T is not supported in component %q", declaration, definition.Name))
 			expander.invalid[definition.Name] = true
@@ -497,6 +505,17 @@ func substituteComponentDeclaration(declaration syntax.Declaration, arguments, p
 	switch value := declaration.(type) {
 	case *syntax.LetDeclaration:
 		return &syntax.LetDeclaration{BaseNode: componentBase(value.BaseNode, expansion), Name: renames[value.Name], Value: substitute(value.Value)}
+	case *syntax.IfDeclaration:
+		result := &syntax.IfDeclaration{BaseNode: componentBase(value.BaseNode, expansion), Condition: substitute(value.Condition)}
+		for _, assignment := range value.Assignments {
+			assignment.BaseNode = componentBase(assignment.BaseNode, expansion)
+			if renamed := renames[assignment.Name]; renamed != "" {
+				assignment.Name = renamed
+			}
+			assignment.Value = substitute(assignment.Value)
+			result.Assignments = append(result.Assignments, assignment)
+		}
+		return result
 	case *syntax.ConfigureDeclaration:
 		result := *value
 		result.BaseNode = componentBase(value.BaseNode, expansion)
@@ -674,6 +693,11 @@ func (expander *componentExpander) rewriteDeclaration(declaration syntax.Declara
 		value.Metadata = expander.rewriteObject(value.Metadata)
 	case *syntax.LetDeclaration:
 		value.Value = expander.rewriteExpression(value.Value)
+	case *syntax.IfDeclaration:
+		value.Condition = expander.rewriteExpression(value.Condition)
+		for index := range value.Assignments {
+			value.Assignments[index].Value = expander.rewriteExpression(value.Assignments[index].Value)
+		}
 	case *syntax.ConfigureDeclaration:
 		value.Index = expander.rewriteExpression(value.Index)
 		value.Alias = expander.rewriteExpression(value.Alias)

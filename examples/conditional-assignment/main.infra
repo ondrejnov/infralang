@@ -1,0 +1,18 @@
+input rootPassword: optional<string>
+
+let cloudConfig = {
+  disableRoot: false,
+  sshPwauth: rootPassword != null,
+}
+
+if (rootPassword != null) {
+  cloudConfig = {
+    ...cloudConfig,
+    password: rootPassword,
+    chpasswd: {
+      expire: false,
+    },
+  }
+}
+
+output cloudConfig = cloudConfig

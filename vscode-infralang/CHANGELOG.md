@@ -4,6 +4,7 @@ All notable changes to the InfraLang Visual Studio Code extension are documented
 
 ## Unreleased
 
+- Complete the `if` keyword for conditional let-assignment blocks.
 - Complete input keys and metadata for Terraform modules present in the local initialization manifest.
 - Add document formatting and enable InfraLang formatting on save by default.
 

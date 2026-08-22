@@ -78,6 +78,8 @@ func (p *parser) parseDeclaration() Declaration {
 		return p.parseComponentInstance()
 	case p.checkIdentifier("let"):
 		return p.parseLetDeclaration()
+	case p.checkIdentifier("if"):
+		return p.parseIfDeclaration()
 	case p.checkIdentifier("configure"):
 		return p.parseConfigureDeclaration()
 	case p.checkIdentifier("resource"):
@@ -543,6 +545,72 @@ func (p *parser) parseLetDeclaration() Declaration {
 		BaseNode: p.base(start, value.GetSpan().End),
 		Name:     name.Lexeme,
 		Value:    value,
+	}
+}
+
+func (p *parser) parseIfDeclaration() Declaration {
+	start := p.advance()
+	p.expect(TokenLeftParen, "expected '(' after 'if'")
+	condition := p.parseExpression()
+	if condition == nil {
+		return nil
+	}
+	p.expect(TokenRightParen, "expected ')' after if condition")
+	p.expect(TokenLeftBrace, "expected '{' before if body")
+	var assignments []LetAssignment
+	diagnosticsBeforeBody := len(p.diagnostics)
+	for !p.check(TokenRightBrace) && !p.atEnd() {
+		if p.match(TokenSemicolon) {
+			continue
+		}
+		name := p.peek()
+		if name.Kind == TokenIdentifier && p.current+1 < len(p.tokens) && p.tokens[p.current+1].Kind == TokenAssign {
+			p.advance()
+			p.advance()
+			value := p.parseExpression()
+			if value == nil {
+				break
+			}
+			assignments = append(assignments, LetAssignment{
+				BaseNode: p.base(name.Span.Start, value.GetSpan().End),
+				Name:     name.Lexeme,
+				Value:    value,
+			})
+			p.match(TokenSemicolon)
+			continue
+		}
+
+		p.report(name, "if bodies accept only assignments to previously declared lets")
+		if p.isDeclarationStart() {
+			if p.parseDeclaration() == nil {
+				p.synchronize()
+			}
+			p.match(TokenSemicolon)
+			continue
+		}
+		if !p.atEnd() {
+			p.advance()
+		}
+	}
+	end := p.expect(TokenRightBrace, "expected '}' after if body")
+	if len(assignments) == 0 && len(p.diagnostics) == diagnosticsBeforeBody {
+		p.report(start, "if body must contain at least one assignment")
+	}
+	return &IfDeclaration{
+		BaseNode:  p.base(start.Span.Start, end.Span.End),
+		Condition: condition, Assignments: assignments,
+	}
+}
+
+func (p *parser) isDeclarationStart() bool {
+	if !p.check(TokenIdentifier) {
+		return false
+	}
+	switch p.peek().Lexeme {
+	case "terraform", "provider", "input", "type", "export", "import", "const", "static", "component", "instantiate", "let", "if", "configure", "resource", "data", "module", "output", "moved":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -1381,7 +1449,7 @@ func (p *parser) synchronize() {
 		}
 		if p.peek().Kind == TokenIdentifier {
 			switch p.peek().Lexeme {
-			case "terraform", "provider", "input", "type", "export", "import", "const", "static", "component", "instantiate", "let", "configure", "resource", "data", "module", "output", "moved":
+			case "terraform", "provider", "input", "type", "export", "import", "const", "static", "component", "instantiate", "let", "if", "configure", "resource", "data", "module", "output", "moved":
 				return
 			}
 		}

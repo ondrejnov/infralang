@@ -264,6 +264,13 @@ operators, `??`, conditional expressions, and list/object comprehensions.
 let enabledNames = [for name, machine in machines: name if machine.enabled]
 let addresses = {for name, machine in machines: name => machine.ipAddress}
 let merged = { ...defaults, ...overrides }
+if (password != null) {
+  merged = {
+    ...merged,
+    username,
+    password,
+  }
+}
 let displayName = f"service-{environment}"
 ```
 
@@ -272,6 +279,11 @@ use `{{` and `}}` for literal braces inside formatted strings.
 
 Object items are evaluated from left to right. Later fields or spreads override
 earlier wire keys. `{ region }` is shorthand for `{ region: region }`.
+`field: value when condition` conditionally contributes one field;
+`if (condition) { name = value }` conditionally updates a previously declared
+`let`. Its body accepts assignments only, and a target reference means the
+value before the assignment. Keep declarations outside and use resource `when`
+for optional resources.
 
 ## Providers, Resources, and Data Sources
 

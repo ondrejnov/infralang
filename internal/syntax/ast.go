@@ -206,6 +206,20 @@ type LetDeclaration struct {
 
 func (*LetDeclaration) declarationNode() {}
 
+type LetAssignment struct {
+	BaseNode
+	Name  string
+	Value Expression
+}
+
+type IfDeclaration struct {
+	BaseNode
+	Condition   Expression
+	Assignments []LetAssignment
+}
+
+func (*IfDeclaration) declarationNode() {}
+
 type ConfigureDeclaration struct {
 	BaseNode
 	Name         string

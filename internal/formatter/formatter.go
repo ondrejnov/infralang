@@ -99,6 +99,10 @@ func collectDeclarationStarts(declarations []syntax.Declaration, starts map[int]
 			collectDeclarationStarts(value.Declarations, starts)
 		case *syntax.ComponentDefinition:
 			collectDeclarationStarts(value.Declarations, starts)
+		case *syntax.IfDeclaration:
+			for index := range value.Assignments {
+				starts[value.Assignments[index].GetSpan().Start.Offset] = true
+			}
 		}
 	}
 }
@@ -195,7 +199,7 @@ func delimiterLayout(tokens []syntax.Token, declarationStarts, forcedMultiline, 
 		if isOpening(token.Kind) {
 			forced := forcedMultiline[token.Span.Start.Offset] && !compactComprehensions[token.Span.Start.Offset]
 			if token.Kind == syntax.TokenLeftBrace && index > 0 {
-				forced = forced || forcedMultiline[tokens[index-1].Span.Start.Offset]
+				forced = forced || forcedMultiline[tokens[index-1].Span.Start.Offset] || ifBodyOpening(tokens, index)
 			}
 			stack = append(stack, opening{token: token, multiline: forced})
 		} else if isClosing(token.Kind) && len(stack) > 0 {
@@ -208,6 +212,25 @@ func delimiterLayout(tokens []syntax.Token, declarationStarts, forcedMultiline, 
 		}
 	}
 	return result
+}
+
+func ifBodyOpening(tokens []syntax.Token, index int) bool {
+	if index < 2 || tokens[index].Kind != syntax.TokenLeftBrace || tokens[index-1].Kind != syntax.TokenRightParen {
+		return false
+	}
+	depth := 0
+	for candidate := index - 1; candidate >= 0; candidate-- {
+		switch tokens[candidate].Kind {
+		case syntax.TokenRightParen:
+			depth++
+		case syntax.TokenLeftParen:
+			depth--
+			if depth == 0 {
+				return candidate > 0 && tokens[candidate-1].IsIdentifier("if")
+			}
+		}
+	}
+	return false
 }
 
 func collectCompactComprehensionOffsets(file *syntax.File, tokens []syntax.Token, forcedMultiline map[int]bool) map[int]bool {
@@ -469,6 +492,9 @@ func needsSpace(previous, current *sourceItem, previousToken *syntax.Token, gene
 		return right != syntax.TokenRightBrace && !(right == syntax.TokenIdentifier && current.token.Lexeme == "for")
 	}
 	if right == syntax.TokenLeftParen {
+		if previousToken.IsIdentifier("if") {
+			return true
+		}
 		return left != syntax.TokenIdentifier && left != syntax.TokenRightParen && left != syntax.TokenRightBracket
 	}
 	if right == syntax.TokenLeftBracket {

@@ -247,7 +247,7 @@ compiling a module. Direct compiler callers can provide the same metadata via
 An `optional<T>` input without an explicit default becomes a nullable Terraform
 variable with `default = null` and the inner Terraform constraint `T`.
 
-### Ordered spreads and conditional fields
+### Ordered spreads and conditional assignments
 
 Object items are evaluated in source order. A later field or spread overrides
 an earlier wire key:
@@ -258,12 +258,32 @@ let config = {
   memory: 2048,
   qemuGuestAgentEnabled: true when installAgent,
 }
+
+if (rootPassword != null) {
+  config = {
+    ...config,
+    password: rootPassword,
+    chpasswd: { expire: false },
+  }
+}
 ```
 
 `...value` requires an object-compatible value. `field: value when condition`
 conditionally contributes that field and requires a boolean condition.
-Conditional runtime fields lower through Terraform object merge semantics;
-compile-time false fields disappear during elaboration.
+
+`if (condition) { assignments... }` conditionally updates previously declared
+`let` values. The body accepts only assignments; resources, modules, data
+sources, and other declarations remain outside the block. An assignment may
+refer to its own target, where the reference means the value before that
+assignment. Multiple assignments are applied in source order. The compiler
+folds the updates into one final Terraform local, so no duplicate local or
+self-reference reaches Terraform. There is no `else` form; use a conditional
+expression when selecting between two values. For an optional resource, use
+the existing `resource ... when condition` form.
+
+Conditional runtime fields and assignments lower through Terraform conditional
+and merge semantics. Compile-time false field conditions disappear during
+elaboration.
 
 ### Typed runtime iteration
 
@@ -348,7 +368,7 @@ const environments = {
 Constants may reference other constants and static loop bindings. Supported
 compile-time values are null, booleans, strings, exact decimal numbers, lists,
 and objects. Operators, conditionals, formatted strings, member/index access,
-object spreads and conditional fields, and comprehensions are evaluated
+object spreads, conditional fields, and comprehensions are evaluated
 without floating-point rounding. A result such as `1 / 3`, which has no finite
 decimal JSON representation, is rejected.
 

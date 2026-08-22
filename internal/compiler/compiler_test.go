@@ -103,6 +103,7 @@ func TestExamplesCompile(t *testing.T) {
 	paths := []string{
 		"../../examples/aws-s3/main.infra",
 		"../../examples/basic/main.infra",
+		"../../examples/conditional-assignment/main.infra",
 		"../../examples/http/main.infra",
 		"../../examples/provider-alias/main.infra",
 	}
@@ -1037,6 +1038,114 @@ let badType = { value: 1 when "yes" }
 	_, diagnostics := Compile(file)
 	if len(diagnostics) != 2 {
 		t.Fatalf("Compile() diagnostics = %v, want runtime block shape and condition type errors", diagnostics)
+	}
+}
+
+func TestCompileConditionalLetAssignments(t *testing.T) {
+	t.Parallel()
+
+	result := compileSource(t, `
+input enabled: bool = true
+let rootPassword = "secret"
+let config = {
+  stableValue: "stable",
+}
+if (enabled) {
+  config = {
+    ...config,
+    password: rootPassword,
+    chpasswd: { expire: false },
+  }
+}
+output config = config
+`)
+	var document map[string]any
+	if err := json.Unmarshal(result, &document); err != nil {
+		t.Fatal(err)
+	}
+	config := document["locals"].(map[string]any)["config"].(string)
+	if strings.Count(config, "var.enabled ?") != 1 || strings.Contains(config, "local.config") ||
+		!strings.Contains(config, `"password" = local.rootPassword`) ||
+		!strings.Contains(config, `"chpasswd" = {"expire" = false}`) || !strings.Contains(config, `"stable_value"`) {
+		t.Errorf("conditional let assignment lowering = %q", config)
+	}
+}
+
+func TestCompileSequentialConditionalLetAssignments(t *testing.T) {
+	t.Parallel()
+
+	result := compileSource(t, `
+input enabled: bool = true
+let value = 1
+if (enabled) {
+  value = value + 1
+  value = value * 2
+}
+output value = value
+`)
+	var document map[string]any
+	if err := json.Unmarshal(result, &document); err != nil {
+		t.Fatal(err)
+	}
+	value := document["locals"].(map[string]any)["value"].(string)
+	if strings.Count(value, "var.enabled") != 1 || strings.Contains(value, "local.value") || !strings.Contains(value, "(1 + 1)") || !strings.Contains(value, "* 2") {
+		t.Errorf("sequential conditional assignments = %q", value)
+	}
+}
+
+func TestCompileRejectsInvalidConditionalLetAssignments(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"before declaration": `
+if (true) { value = 2 }
+let value = 1
+`,
+		"non-let target": `
+input value: number = 1
+if (true) { value = 2 }
+`,
+		"condition type": `
+let value = 1
+if ("yes") { value = 2 }
+`,
+		"unknown component target": `
+component Invalid() {
+  if (true) { missing = 2 }
+}
+`,
+	}
+	for name, source := range tests {
+		t.Run(name, func(t *testing.T) {
+			file, parseDiagnostics := syntax.Parse(name+".infra", source)
+			if len(parseDiagnostics) != 0 {
+				t.Fatal(parseDiagnostics)
+			}
+			_, diagnostics := Compile(file)
+			if len(diagnostics) == 0 {
+				t.Fatal("Compile() returned no diagnostics")
+			}
+		})
+	}
+}
+
+func TestCompileConditionalLetAssignmentInsideComponent(t *testing.T) {
+	t.Parallel()
+
+	result := compileSource(t, `
+input enabled: bool = true
+component Updated(enabled: bool) {
+  let value = 1
+  if (enabled) {
+    value = value + 1
+  }
+  export result = value
+}
+instantiate updated = Updated(enabled: enabled)
+output result = updated.result
+`)
+	if strings.Contains(string(result), "local.value") || !strings.Contains(string(result), "var.enabled") {
+		t.Fatalf("conditional component assignment lowering:\n%s", result)
 	}
 }
 

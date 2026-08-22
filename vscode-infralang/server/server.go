@@ -481,7 +481,7 @@ func (server *server) completions(params TextDocumentPositionParams) []Completio
 	}
 	keywords := []string{
 		"terraform", "provider", "input", "type", "export", "import", "const", "static", "component", "instantiate",
-		"let", "configure", "resource", "data", "module", "output", "moved", "from", "using", "with", "when", "for", "in",
+		"let", "configure", "resource", "data", "module", "output", "moved", "from", "using", "with", "when", "if", "for", "in",
 		"true", "false", "null",
 	}
 	for _, keyword := range keywords {

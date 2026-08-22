@@ -102,8 +102,8 @@
         { "include": "#language-constants" },
         { "include": "#types" },
         { "include": "#provider-methods" },
-        { "include": "#function-calls" },
         { "include": "#contextual-keywords" },
+        { "include": "#function-calls" },
         { "include": "#operators" },
         { "include": "#numbers" }
       ]

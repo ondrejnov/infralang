@@ -79,7 +79,7 @@ the HashiCorp AWS provider and valid AWS credentials.
 - Terraform JSON generation with atomic output replacement
 - Source diagnostics with line and column information
 - Input source/wire aliases, object punning, concise validations, grouped raw moves, and conditional resources
-- Structural type aliases, ordered object spreads, conditional fields, and checked local module interfaces
+- Structural type aliases, ordered object spreads, conditional let assignments, and checked local module interfaces
 - Checked input forwarding with `...inputs(value)` and provider shorthand mappings
 - Exact compile-time constants, deterministic static declaration loops, and compile-time labels
 - Canonical type-only imports and directory-scoped reusable components
@@ -368,6 +368,10 @@ existing volume group and exposes its device path, UUID, and allocated size.
 `examples/aws-s3` creates a private, versioned, and encrypted AWS S3 bucket
 whose globally unique name includes the current AWS account ID.
 
+`examples/conditional-assignment` demonstrates an assignment-only runtime `if`
+that extends an existing object without producing a self-referential Terraform
+local.
+
 Generated `*.tf.json` files are ignored by Git because they are compiler
 artifacts.
 
@@ -402,7 +406,7 @@ InfraLang's three implemented language phases are cumulative:
    grouped raw `moved` declarations, resource `when`, and concise input
    validations.
 2. Phase 2 adds structural object checking, directory-wide type aliases,
-   ordered spreads and conditional fields, typed `each`, checked local module
+   ordered spreads and conditional let assignments, typed `each`, checked local module
    interfaces, and `...inputs(value)` forwarding.
 3. Phase 3 adds exact constants, deterministic `static for`, compile-time
    labels and indexed handles, canonical type and module imports, and hygienic

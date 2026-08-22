@@ -104,6 +104,25 @@ func TestFormatKeepsPunnedObjectsOnOneLine(t *testing.T) {
 	}
 }
 
+func TestFormatConditionalLetAssignments(t *testing.T) {
+	source := "let config={stable:true}\nif(enabled){config={...config,password:\"secret\"}}\n"
+	want := `let config = { stable: true }
+if (enabled) {
+  config = {
+    ...config,
+    password: "secret"
+  }
+}
+`
+	formatted, diagnostics := Format("main.infra", source)
+	if len(diagnostics) > 0 {
+		t.Fatalf("Format() diagnostics = %v", diagnostics)
+	}
+	if got := string(formatted); got != want {
+		t.Fatalf("Format() =\n%s\nwant:\n%s", got, want)
+	}
+}
+
 func TestFormatAllExamplesIsIdempotentAndParsable(t *testing.T) {
 	err := filepath.WalkDir("../../examples", func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
