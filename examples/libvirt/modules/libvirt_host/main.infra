@@ -49,7 +49,7 @@ resource cloudinitPool = libvirt.pool("cloudinit", {
   create: {
     autostart: true,
     build: true,
-    start: true
+    start: true,
   },
   destroy: { delete: false },
 })

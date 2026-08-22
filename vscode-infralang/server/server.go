@@ -844,58 +844,16 @@ func compileDiagnostics(files []*fileIndex, workspace *workspace) map[string][]D
 		return result
 	}
 	sources := make(map[string]string, len(files))
-	parsedFiles := make(map[string]*syntax.File, len(files))
-	var allDiagnostics []syntax.Diagnostic
 	for _, index := range files {
 		sources[index.Path] = index.Source
-		parsed, diagnostics := syntax.Parse(index.Path, index.Source)
-		parsedFiles[index.Path] = parsed
-		allDiagnostics = append(allDiagnostics, diagnostics...)
 	}
+	combined, allDiagnostics := combineDiagnosticFiles(files, workspace)
 	if len(allDiagnostics) == 0 {
-		combined := &syntax.File{Name: files[0].Path, ID: syntax.FileID(files[0].Path)}
-		addedAliases := make(map[string]bool)
-		for _, index := range files {
-			for _, declaration := range parsedFiles[index.Path].Declarations {
-				imported, ok := declaration.(*syntax.TypeImportDeclaration)
-				if !ok {
-					combined.Declarations = append(combined.Declarations, declaration)
-					continue
-				}
-				targetPath := filepath.Clean(filepath.Join(filepath.Dir(index.Path), imported.Path))
-				target := parsedFiles[targetPath]
-				if target == nil {
-					if targetIndex := workspace.file(targetPath); targetIndex != nil {
-						target, _ = syntax.Parse(targetPath, targetIndex.Source)
-					}
-				}
-				if target == nil {
-					combined.Declarations = append(combined.Declarations, declaration)
-					continue
-				}
-				aliases := make(map[string]*syntax.TypeAliasDeclaration)
-				for _, targetDeclaration := range target.Declarations {
-					if alias, ok := targetDeclaration.(*syntax.TypeAliasDeclaration); ok {
-						aliases[alias.Name] = alias
-						key := targetPath + "#" + alias.Name
-						if !addedAliases[key] && parsedFiles[targetPath] == nil {
-							combined.Declarations = append(combined.Declarations, alias)
-							addedAliases[key] = true
-						}
-					}
-				}
-				for _, importItem := range imported.Items {
-					alias := aliases[importItem.ImportedName]
-					if alias == nil || importItem.LocalName == alias.Name {
-						continue
-					}
-					clone := *alias
-					clone.Name = importItem.LocalName
-					combined.Declarations = append(combined.Declarations, &clone)
-				}
-			}
-		}
-		_, compilerDiagnostics := compiler.Compile(combined)
+		directory := filepath.Dir(files[0].Path)
+		localModules := collectDiagnosticModuleInterfaces(combined, directory, workspace, map[string]bool{directory: true})
+		_, compilerDiagnostics := compiler.CompileWithOptions(combined, compiler.CompileOptions{
+			ModuleID: directory, LocalModules: localModules,
+		})
 		allDiagnostics = append(allDiagnostics, compilerDiagnostics...)
 	}
 	for _, diagnostic := range syntax.SortDiagnostics(allDiagnostics) {
@@ -907,6 +865,90 @@ func compileDiagnostics(files []*fileIndex, workspace *workspace) map[string][]D
 		result[path] = append(result[path], Diagnostic{
 			Range: rangeForSpan(source, diagnostic.Span), Severity: 1, Code: diagnostic.Code, Source: "InfraLang", Message: diagnostic.Message,
 		})
+	}
+	return result
+}
+
+func combineDiagnosticFiles(files []*fileIndex, workspace *workspace) (*syntax.File, []syntax.Diagnostic) {
+	combined := &syntax.File{Name: files[0].Path, ID: syntax.FileID(files[0].Path)}
+	parsedFiles := make(map[string]*syntax.File, len(files))
+	var diagnostics []syntax.Diagnostic
+	for _, index := range files {
+		parsed, parseDiagnostics := syntax.Parse(index.Path, index.Source)
+		parsedFiles[index.Path] = parsed
+		diagnostics = append(diagnostics, parseDiagnostics...)
+	}
+
+	addedAliases := make(map[string]bool)
+	for _, index := range files {
+		for _, declaration := range parsedFiles[index.Path].Declarations {
+			imported, ok := declaration.(*syntax.TypeImportDeclaration)
+			if !ok {
+				combined.Declarations = append(combined.Declarations, declaration)
+				continue
+			}
+			targetPath := filepath.Clean(filepath.Join(filepath.Dir(index.Path), imported.Path))
+			target := parsedFiles[targetPath]
+			if target == nil {
+				if targetIndex := workspace.file(targetPath); targetIndex != nil {
+					target, _ = syntax.Parse(targetPath, targetIndex.Source)
+				}
+			}
+			if target == nil {
+				combined.Declarations = append(combined.Declarations, declaration)
+				continue
+			}
+			aliases := make(map[string]*syntax.TypeAliasDeclaration)
+			for _, targetDeclaration := range target.Declarations {
+				if alias, ok := targetDeclaration.(*syntax.TypeAliasDeclaration); ok {
+					aliases[alias.Name] = alias
+					key := targetPath + "#" + alias.Name
+					if !addedAliases[key] && parsedFiles[targetPath] == nil {
+						combined.Declarations = append(combined.Declarations, alias)
+						addedAliases[key] = true
+					}
+				}
+			}
+			for _, importItem := range imported.Items {
+				alias := aliases[importItem.ImportedName]
+				if alias == nil || importItem.LocalName == alias.Name {
+					continue
+				}
+				clone := *alias
+				clone.Name = importItem.LocalName
+				combined.Declarations = append(combined.Declarations, &clone)
+			}
+		}
+	}
+	return combined, diagnostics
+}
+
+func collectDiagnosticModuleInterfaces(file *syntax.File, directory string, workspace *workspace, visiting map[string]bool) map[string]compiler.ModuleInterface {
+	result := make(map[string]compiler.ModuleInterface)
+	for _, declaration := range file.Declarations {
+		imported, ok := declaration.(*syntax.ModuleImportDeclaration)
+		if !ok || !strings.HasPrefix(imported.Source, ".") {
+			continue
+		}
+		targetDirectory := filepath.Clean(filepath.Join(directory, imported.Source))
+		if visiting[targetDirectory] {
+			continue
+		}
+		files := workspace.directoryFiles(targetDirectory)
+		if len(files) == 0 {
+			continue
+		}
+		child, diagnostics := combineDiagnosticFiles(files, workspace)
+		if len(diagnostics) != 0 {
+			continue
+		}
+		visiting[targetDirectory] = true
+		localModules := collectDiagnosticModuleInterfaces(child, targetDirectory, workspace, visiting)
+		delete(visiting, targetDirectory)
+		contract, _ := compiler.CollectInterface(child, compiler.CompileOptions{
+			ModuleID: targetDirectory, LocalModules: localModules,
+		})
+		result[imported.Source] = contract
 	}
 	return result
 }

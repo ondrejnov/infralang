@@ -703,6 +703,42 @@ func TestDiagnosticsCompileUnsavedSource(t *testing.T) {
 	}
 }
 
+func TestDiagnosticsResolveSiblingInfraModuleForInputForwarding(t *testing.T) {
+	root := t.TempDir()
+	hostDirectory := filepath.Join(root, "modules", "host")
+	childDirectory := filepath.Join(root, "modules", "child")
+	writeTestFile(t, filepath.Join(hostDirectory, "types.infra"), `
+export type ChildConfig = object {
+  enabled?: bool = false,
+}
+`)
+	writeTestFile(t, filepath.Join(hostDirectory, "main.infra"), `
+import module Child from "../child"
+input children: map<ChildConfig>
+module childModules = Child("child", {
+  ...inputs(each.value),
+  name: each.key,
+}) with { forEach: children }
+`)
+	writeTestFile(t, filepath.Join(childDirectory, "main.infra"), `
+input enabled: bool = false
+input name: string
+output selected = name
+`)
+
+	workspace := newWorkspace()
+	workspace.setRoots([]string{root})
+	if err := workspace.scan(); err != nil {
+		t.Fatalf("scan workspace: %v", err)
+	}
+	diagnostics := compileDiagnostics(workspace.directoryFiles(hostDirectory), workspace)
+	for path, items := range diagnostics {
+		if len(items) != 0 {
+			t.Fatalf("diagnostics for %s = %#v, want none", path, items)
+		}
+	}
+}
+
 func TestWatchedFileChangesRefreshWorkspaceIndex(t *testing.T) {
 	root := t.TempDir()
 	firstPath := filepath.Join(root, "first.infra")

@@ -94,31 +94,6 @@ Provider method names become Terraform type suffixes using the same camelCase
 to snake_case rule: `aws.s3Bucket` becomes `aws_s3_bucket`, and
 `lvm.logicalVolume` becomes `lvm_logical_volume`.
 
-### Breaking migration rule
-
-Older InfraLang converted unquoted object keys only in selected provider
-argument contexts. The current rule is deliberately context-independent:
-unquoted object keys become snake_case wire keys everywhere. This can change an
-existing exact camelCase object key.
-
-To preserve an exact camelCase wire key during migration, quote it:
-
-```infra
-let payload = { "imageId": value }
-```
-
-For a reusable structural contract, preserve it with an explicit alias:
-
-```infra
-type Payload = object { imageId "imageId": string }
-```
-
-Top-level input names are converted to snake_case by default. Adding or changing
-an explicit input alias is a Terraform interface change and must be reviewed
-like renaming a Terraform variable. This is a breaking migration for older
-files that relied on camelCase top-level Terraform variable names; preserve such
-a name explicitly with `input imageId "imageId": string`.
-
 ## Phase 1: source ergonomics
 
 ### Object punning
@@ -182,7 +157,7 @@ access, or iterate over it.
 
 ### Grouped raw moves
 
-The original string form remains valid:
+A single move uses:
 
 ```infra
 moved from "module.old" to "module.host.module.vm[\"api\"]"
@@ -369,10 +344,12 @@ module child = Child("child", {
 ```
 
 The forwarded value must have a statically known structural object type. Its
-source fields are matched to the child input source names, then emitted with the
-child's wire names. Later explicit arguments override earlier forwarded fields.
+wire keys are matched to the child input wire names and emitted with those same
+names. Later explicit arguments override earlier forwarded fields.
 Unknown, missing, duplicate, or incompatible fields are diagnosed. This is not
 a general object spread and does not defer interface matching to Terraform.
+See [Checked input forwarding](input-forwarding.md) for matching rules,
+`forEach` usage, generated output, and validation guidance.
 
 ## Phase 3: compile-time composition
 
@@ -658,11 +635,19 @@ type contracts instead.
 
 ## Current boundary
 
-InfraLang does not replace Terraform's graph, provider-schema validation,
-version solver, state engine, plan, or apply lifecycle. Provider resource
-attributes remain dynamically typed until provider-schema type generation is
-implemented.
+InfraLang statically checks its own syntax, expressions, types, local module
+interfaces, components, and compile-time constructs. It does not replace
+Terraform/OpenTofu's dependency graph, provider-specific validation, version
+constraint solver, state engine, plan, or apply lifecycle. The CLI delegates
+`init`, `validate`, `plan`, `apply`, and `destroy` to Terraform/OpenTofu.
 
-The current language also has no user-defined runtime functions, formatter,
-language server, or native Terraform test syntax. Remote module interfaces are
-not fetched or inferred during compilation.
+When available, provider schema metadata is used to recognize and lower
+nested blocks in provider configurations. Provider resource and data-source
+arguments and attributes remain dynamically typed; provider-schema-derived
+types are not generated for them. The compiler does not fetch or infer
+interfaces for remote modules, so registry and URL modules remain unchecked
+boundaries until Terraform/OpenTofu processes them.
+
+The language has no user-defined runtime functions or native Terraform test
+syntax. The CLI and VS Code extension provide formatting, and the extension
+also provides the InfraLang language server.
