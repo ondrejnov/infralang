@@ -50,8 +50,17 @@ InfraLang checks structural object members and local InfraLang module inputs, ou
 ## Core Declarations
 
 ```infra
+const statePrefix = "application/production"
+
 terraform {
   requiredVersion: ">= 1.5.0",
+  backend s3 = {
+    bucket: "example-tfstate",
+    key: f"{statePrefix}/terraform.tfstate",
+    region: "eu-central-1",
+    dynamodbTable: "terraform-locks",
+    encrypt: true,
+  }
 }
 
 provider AWS from "hashicorp/aws" version "~> 6.0"
@@ -95,7 +104,7 @@ moved from "module.old" to "module.child"
 
 Declaration rules:
 
-- `terraform` supports `requiredVersion` or `required_version`; only one block is allowed.
+- `terraform` supports `requiredVersion` or `required_version`, exactly one `backend <type> = { ... }` clause, and at most one `cloud = { ... }` clause; only one block is allowed.
 - `provider` source and version are literal strings.
 - `configure name = Provider({...})` creates the default provider configuration.
 - `configure name = Provider("alias", {...})` creates an aliased configuration.

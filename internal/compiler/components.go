@@ -688,6 +688,9 @@ func (expander *componentExpander) rewriteDeclaration(declaration syntax.Declara
 	switch value := declaration.(type) {
 	case *syntax.TerraformDeclaration:
 		value.Config = expander.rewriteObject(value.Config)
+		for _, block := range value.Blocks {
+			block.Config = expander.rewriteObject(block.Config)
+		}
 	case *syntax.InputDeclaration:
 		value.Default = expander.rewriteExpression(value.Default)
 		value.Metadata = expander.rewriteObject(value.Metadata)

@@ -20,6 +20,12 @@ source syntax and lowering rules without relying on a repository checkout.
 ```infra
 terraform {
   requiredVersion: ">= 1.5.0",
+  backend s3 = {
+    bucket: "example-tfstate",
+    key: "application/production/terraform.tfstate",
+    dynamodbTable: "terraform-locks",
+  },
+  cloud = { organization: "acme" }
 }
 
 provider AWS from "hashicorp/aws" version "~> 6.0"
@@ -41,10 +47,16 @@ output bucketId = bucket.id
 ```
 
 `terraform` accepts `requiredVersion` or `required_version`, but only one
-Terraform settings block is allowed. Provider source and version are literal
-strings. A provider configuration with an alias uses the two-argument form.
-An inherited provider slot uses the provider declaration without arguments and
-emits no child provider block.
+Terraform settings block is allowed. It also accepts exactly one
+`backend <type> = { ... }` clause and at most one `cloud = { ... }` clause.
+Backend and cloud values must reduce to compile-time constants (literals and
+`const` references; runtime values, function calls, and spreads are rejected).
+Keys follow the normal object rule: unquoted camelCase converts to snake_case
+on the wire, quoted keys keep their spelling. The clause emits ordinary
+`"terraform": { "backend": { "s3": { ... } } }` / `"cloud": { ... }` JSON.
+Provider source and version are literal strings. A provider configuration with
+an alias uses the two-argument form. An inherited provider slot uses the
+provider declaration without arguments and emits no child provider block.
 
 ## Types
 

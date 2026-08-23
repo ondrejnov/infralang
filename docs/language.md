@@ -191,6 +191,36 @@ Moved addresses are intentionally not resolved as InfraLang symbols because a
 source address normally refers to infrastructure no longer declared in the
 program.
 
+### State backend and cloud configuration
+
+The `terraform` block accepts exactly one `backend <type>` clause and at most
+one `cloud` clause alongside scalar settings such as `requiredVersion`:
+
+```infra
+const statePrefix = "application/production"
+
+terraform {
+  requiredVersion: ">= 1.5.0",
+  backend s3 = {
+    bucket: "example-tfstate",
+    key: f"{statePrefix}/terraform.tfstate",
+    region: "eu-central-1",
+    dynamodbTable: "terraform-locks",
+    encrypt: true,
+  }
+}
+```
+
+Backend and cloud values must reduce to compile-time constants (literals,
+references to `const` values, and constant expressions). Terraform itself
+forbids interpolations in backend configuration, so runtime inputs, locals, and
+resources are rejected with diagnostics. Keys follow the normal object rule:
+unquoted camelCase keys convert to snake_case wire names, and quoted keys keep
+their exact spelling. A `cloud = { ... }` clause emits the Terraform Cloud block
+and carries no type label. The clause lowers to ordinary Terraform JSON —
+`"backend": { "s3": { ... } }` or `"cloud": { ... }` inside the `terraform`
+object — and never changes resource addresses or state identity.
+
 ## Phase 2: structural composition
 
 ### Types and aliases

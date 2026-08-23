@@ -40,9 +40,23 @@ type Declaration interface {
 type TerraformDeclaration struct {
 	BaseNode
 	Config *ObjectExpression
+	Blocks []*TerraformBlockClause
 }
 
 func (*TerraformDeclaration) declarationNode() {}
+
+type TerraformBlockClause struct {
+	BaseNode
+	Kind     string
+	Name     string
+	Config   *ObjectExpression
+	Resolved []TerraformSetting
+}
+
+type TerraformSetting struct {
+	WireName string
+	Value    any
+}
 
 type ProviderDeclaration struct {
 	BaseNode

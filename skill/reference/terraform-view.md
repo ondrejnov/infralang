@@ -9,6 +9,8 @@ the Terraform address and runtime semantics.
 | InfraLang source | Terraform HCL equivalent | Terraform JSON shape or reference |
 | --- | --- | --- |
 | `terraform { requiredVersion: ">= 1.5.0" }` | `terraform { required_version = ">= 1.5.0" }` | `"terraform": { "required_version": ... }` |
+| `terraform { backend s3 = { bucket: "b" } }` | `backend "s3" { bucket = "b" }` inside `terraform {}` | `"terraform": { "backend": { "s3": { ... } } }` |
+| `terraform { cloud = { organization: "acme" } }` | `cloud { organization = "acme" }` inside `terraform {}` | `"terraform": { "cloud": { ... } }` |
 | `provider AWS from "hashicorp/aws" version "~> 6.0"` | `required_providers { aws = { source = "hashicorp/aws", version = "~> 6.0" } }` | `terraform.required_providers.aws` |
 | `input imageId: string` | `variable "image_id" { type = string }` | `"variable": { "image_id": { "type": "string" } }` |
 | `let bucketName = value` | `locals { bucketName = value }` | `"locals": { "bucketName": ... }` |

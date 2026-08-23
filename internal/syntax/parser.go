@@ -378,14 +378,88 @@ func (p *parser) parseModuleImportDeclaration(start Position) Declaration {
 
 func (p *parser) parseTerraformDeclaration() Declaration {
 	start := p.advance().Span.Start
-	config := p.parseObjectExpression()
-	if config == nil {
+	open := p.expect(TokenLeftBrace, "expected '{' after terraform")
+	if open.Kind != TokenLeftBrace {
 		return nil
 	}
-	return &TerraformDeclaration{
-		BaseNode: p.base(start, config.GetSpan().End),
-		Config:   config,
+	config := &ObjectExpression{BaseNode: BaseNode{File: FileID(p.filename), Span: open.Span}}
+	var blocks []*TerraformBlockClause
+	backendCount := 0
+	seenCloud := false
+	for !p.check(TokenRightBrace) && !p.atEnd() {
+		if clause, ok := p.parseTerraformBlockClause(backendCount, seenCloud); ok {
+			if clause != nil {
+				blocks = append(blocks, clause)
+				if clause.Kind == "backend" {
+					backendCount++
+				} else {
+					seenCloud = true
+				}
+			}
+			if !p.match(TokenComma, TokenSemicolon) && !p.check(TokenRightBrace) {
+				p.report(p.peek(), "expected ',' or ';' between terraform settings")
+			}
+			continue
+		}
+		item, ok := p.parseObjectItem()
+		if !ok {
+			break
+		}
+		config.Items = append(config.Items, item)
+		if field, ok := item.(ObjectField); ok {
+			config.Fields = append(config.Fields, field)
+		}
+		if !p.match(TokenComma, TokenSemicolon) && !p.check(TokenRightBrace) {
+			p.report(p.peek(), "expected ',' or ';' between terraform settings")
+		}
 	}
+	end := p.expect(TokenRightBrace, "expected '}' after terraform block")
+	config.Span = Span{File: FileID(p.filename), Start: open.Span.Start, End: end.Span.End}
+	return &TerraformDeclaration{
+		BaseNode: p.base(start, end.Span.End),
+		Config:   config,
+		Blocks:   blocks,
+	}
+}
+
+func (p *parser) parseTerraformBlockClause(backendCount int, seenCloud bool) (*TerraformBlockClause, bool) {
+	token := p.peek()
+	var kind string
+	switch {
+	case token.IsIdentifier("backend") && p.lookaheadKind(1) == TokenIdentifier:
+		kind = "backend"
+	case token.IsIdentifier("cloud") && p.lookaheadKind(1) == TokenAssign:
+		kind = "cloud"
+	default:
+		return nil, false
+	}
+	start := p.advance().Span.Start
+	name := ""
+	if kind == "backend" {
+		nameToken := p.advance()
+		name = nameToken.Lexeme
+		if !IsTerraformIdentifier(name) {
+			p.report(nameToken, fmt.Sprintf("backend type %q is not a valid Terraform identifier", name))
+		}
+		if backendCount >= 1 {
+			p.report(nameToken, "only one terraform backend is allowed")
+		}
+	} else if seenCloud {
+		p.report(token, "cloud configuration is already declared")
+	}
+	if !p.match(TokenAssign) {
+		p.report(p.peek(), fmt.Sprintf("expected '=' after terraform %s", kind))
+	}
+	config := p.parseObjectExpression()
+	if config == nil {
+		return nil, true
+	}
+	return &TerraformBlockClause{
+		BaseNode: p.base(start, config.GetSpan().End),
+		Kind:     kind,
+		Name:     name,
+		Config:   config,
+	}, true
 }
 
 func (p *parser) parseProviderDeclaration() Declaration {
@@ -1541,6 +1615,14 @@ func (p *parser) atEnd() bool {
 
 func (p *parser) peek() Token {
 	return p.tokens[p.current]
+}
+
+func (p *parser) lookaheadKind(offset int) TokenKind {
+	index := p.current + offset
+	if index >= len(p.tokens) {
+		return TokenEOF
+	}
+	return p.tokens[index].Kind
 }
 
 func (p *parser) previous() Token {

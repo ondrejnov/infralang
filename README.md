@@ -84,6 +84,7 @@ the HashiCorp AWS provider and valid AWS credentials.
 - Exact compile-time constants, deterministic static declaration loops, and compile-time labels
 - Canonical type-only imports and directory-scoped reusable components
 - Indexed provider, module, and component handles that erase before Terraform lowering
+- Remote state configuration via `backend <type> = { ... }` and `cloud = { ... }` clauses in the `terraform` block
 
 See the [language reference](docs/language.md) for syntax, type rules, imports,
 components, modules, and Terraform lowering details.

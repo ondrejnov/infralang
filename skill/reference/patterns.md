@@ -35,6 +35,28 @@ output bucketId = bucket.id
 Use the source handle `bucket` in later expressions. The explicit label
 `application` is the Terraform identity and should be changed only deliberately.
 
+## Remote State Backend
+
+```infra
+const statePrefix = "application/production"
+
+terraform {
+  requiredVersion: ">= 1.5.0",
+  backend s3 = {
+    bucket: "example-tfstate",
+    key: f"{statePrefix}/terraform.tfstate",
+    region: "eu-central-1",
+    dynamodbTable: "terraform-locks",
+    encrypt: true,
+  }
+}
+```
+
+Backend values must be compile-time constants (literals and `const`
+references); Terraform itself forbids interpolations there, so runtime inputs
+and locals are rejected with diagnostics. Exactly one backend clause is
+allowed per module; a second one is diagnosed.
+
 ## Provider Alias and Child Mapping
 
 ```infra

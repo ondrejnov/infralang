@@ -119,6 +119,49 @@ static for index, region in regions {
 	}
 }
 
+func TestParseTerraformBlockClauses(t *testing.T) {
+	t.Parallel()
+
+	file, diagnostics := Parse("terraform.infra", `
+terraform {
+  requiredVersion: ">= 1.5.0",
+  backend s3 = {
+    bucket: "example-tfstate",
+    encrypt: true,
+  },
+  cloud = { organization: "acme" }
+}
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("Parse() diagnostics = %v", diagnostics)
+	}
+	declaration := file.Declarations[0].(*TerraformDeclaration)
+	if len(declaration.Config.Fields) != 1 || declaration.Config.Fields[0].Name != "requiredVersion" {
+		t.Fatalf("config fields = %#v", declaration.Config.Fields)
+	}
+	if len(declaration.Blocks) != 2 {
+		t.Fatalf("blocks = %#v", declaration.Blocks)
+	}
+	backend := declaration.Blocks[0]
+	if backend.Kind != "backend" || backend.Name != "s3" || len(backend.Config.Fields) != 2 {
+		t.Fatalf("backend clause = %#v", backend)
+	}
+	cloud := declaration.Blocks[1]
+	if cloud.Kind != "cloud" || cloud.Name != "" || len(cloud.Config.Fields) != 1 {
+		t.Fatalf("cloud clause = %#v", cloud)
+	}
+
+	_, diagnostics = Parse("terraform.infra", `
+terraform {
+  backend s3 = { bucket: "a" },
+  backend s3 = { bucket: "b" }
+}
+`)
+	if len(diagnostics) == 0 {
+		t.Fatal("duplicate backend was accepted")
+	}
+}
+
 func TestParseRejectsUnaryPlus(t *testing.T) {
 	t.Parallel()
 

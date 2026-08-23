@@ -71,6 +71,13 @@ func Prepare(file *syntax.File) (*syntax.File, []syntax.Diagnostic) {
 		exportChecks[index].Value = p.rewriteExpression(exportChecks[index].Value)
 	}
 	expanded = p.lowerIfDeclarations(expanded)
+	for _, declaration := range expanded {
+		if terraform, ok := declaration.(*syntax.TerraformDeclaration); ok {
+			for _, block := range terraform.Blocks {
+				p.resolveTerraformBlock(block)
+			}
+		}
+	}
 	p.checkFinalIdentities(expanded)
 	result := &syntax.File{Name: file.Name, ID: file.ID, Source: file.Source, Declarations: expanded}
 	result.ComponentArgumentChecks = append(result.ComponentArgumentChecks, file.ComponentArgumentChecks...)

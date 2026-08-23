@@ -352,11 +352,42 @@ func (c *compiler) compileTerraform(declaration *syntax.TerraformDeclaration) {
 				continue
 			}
 			c.terraformConfig["required_version"] = value
+		case "backend", "cloud":
+			c.addDiagnostic(declaration.Config.GetSpan(), fmt.Sprintf("use the terraform %s clause instead of a field", key))
 		default:
 			c.addDiagnostic(declaration.Config.GetSpan(), fmt.Sprintf("unsupported terraform setting %q", key))
 		}
 	}
 	c.checkExpression(declaration.Config)
+	backends := make(map[string]any)
+	var cloudSettings map[string]any
+	for _, block := range declaration.Blocks {
+		settings := make(map[string]any)
+		for _, setting := range block.Resolved {
+			settings[setting.WireName] = setting.Value
+		}
+		switch block.Kind {
+		case "backend":
+			if !syntax.IsTerraformIdentifier(block.Name) {
+				continue
+			}
+			if _, exists := backends[block.Name]; exists {
+				continue
+			}
+			backends[block.Name] = settings
+		case "cloud":
+			if cloudSettings != nil {
+				continue
+			}
+			cloudSettings = settings
+		}
+	}
+	if len(backends) > 0 {
+		c.terraformConfig["backend"] = backends
+	}
+	if cloudSettings != nil {
+		c.terraformConfig["cloud"] = cloudSettings
+	}
 }
 
 func (c *compiler) compileProvider(declaration *syntax.ProviderDeclaration) {

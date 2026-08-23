@@ -312,6 +312,9 @@ func (p *preparer) rewriteDeclaration(declaration syntax.Declaration) {
 	switch value := declaration.(type) {
 	case *syntax.TerraformDeclaration:
 		value.Config = p.rewriteObject(value.Config)
+		for _, block := range value.Blocks {
+			block.Config = p.rewriteObject(block.Config)
+		}
 	case *syntax.TypeAliasDeclaration:
 		value.Type = p.rewriteType(value.Type)
 	case *syntax.ComponentDefinition:
@@ -532,7 +535,11 @@ func rewriteMetadataItems(items []syntax.InputMetadataItem, p *preparer) []synta
 func cloneDeclaration(declaration syntax.Declaration, environment *staticEnv, expansion string) syntax.Declaration {
 	switch value := declaration.(type) {
 	case *syntax.TerraformDeclaration:
-		return &syntax.TerraformDeclaration{BaseNode: cloneBase(value.BaseNode, expansion), Config: cloneObject(value.Config, environment, expansion)}
+		result := &syntax.TerraformDeclaration{BaseNode: cloneBase(value.BaseNode, expansion), Config: cloneObject(value.Config, environment, expansion)}
+		for _, block := range value.Blocks {
+			result.Blocks = append(result.Blocks, &syntax.TerraformBlockClause{BaseNode: cloneBase(block.BaseNode, expansion), Kind: block.Kind, Name: block.Name, Config: cloneObject(block.Config, environment, expansion)})
+		}
+		return result
 	case *syntax.ProviderDeclaration:
 		result := *value
 		result.BaseNode = cloneBase(value.BaseNode, expansion)
@@ -711,6 +718,47 @@ func cloneExpression(expression syntax.Expression, environment *staticEnv, expan
 		return result
 	default:
 		return expression
+	}
+}
+
+func (p *preparer) resolveTerraformBlock(block *syntax.TerraformBlockClause) {
+	block.Resolved = nil
+	seen := make(map[string]bool)
+	for _, item := range objectItems(block.Config) {
+		field, ok := item.(syntax.ObjectField)
+		if !ok {
+			p.addDiagnosticAt(item, fmt.Sprintf("terraform %s configuration must contain literal fields", block.Kind))
+			continue
+		}
+		wire := objectFieldName(field).Wire
+		if seen[wire] {
+			p.addDiagnosticAt(field.Value, fmt.Sprintf("terraform %s configuration has duplicate key %q", block.Kind, wire))
+			continue
+		}
+		if field.Condition != nil {
+			condition, valid := p.eval(field.Condition, nil)
+			if !valid {
+				continue
+			}
+			if condition.kind != constBool {
+				p.addDiagnosticAt(field.Condition, "terraform configuration field condition expects bool")
+				continue
+			}
+			if !condition.bool {
+				continue
+			}
+		}
+		value, valid := p.eval(field.Value, nil)
+		if !valid {
+			continue
+		}
+		encoded, ok := constJSON(value)
+		if !ok {
+			p.addDiagnosticAt(field.Value, fmt.Sprintf("terraform %s setting %q must reduce to a compile-time JSON value", block.Kind, wire))
+			continue
+		}
+		seen[wire] = true
+		block.Resolved = append(block.Resolved, syntax.TerraformSetting{WireName: wire, Value: encoded})
 	}
 }
 

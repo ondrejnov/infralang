@@ -200,7 +200,7 @@ on the Terraform wire. Quoted object keys preserve their exact spelling.
 
 Supported declarations include:
 
-- `terraform { requiredVersion: "..." }`
+- `terraform { requiredVersion: "..." }` plus one `backend <type> = { ... }` and at most one `cloud = { ... }` clause
 - `provider Name from "namespace/type" version "..."`
 - `input name: Type = default with { metadata }`
 - `let name = expression`
@@ -217,6 +217,38 @@ Declarations are order-independent. Newlines or semicolons separate top-level
 declarations. Function arguments and array items require commas; object items
 may use commas or semicolons, with trailing commas recommended in multiline
 objects.
+
+### State backend and cloud configuration
+
+The `terraform` block accepts exactly one `backend <type>` clause and at most
+one `cloud` clause next to scalar settings such as `requiredVersion`:
+
+```infra
+const statePrefix = "application/production"
+
+terraform {
+  requiredVersion: ">= 1.5.0",
+  backend s3 = {
+    bucket: "example-tfstate",
+    key: f"{statePrefix}/terraform.tfstate",
+    region: "eu-central-1",
+    dynamodbTable: "terraform-locks",
+    encrypt: true,
+  },
+  cloud = { organization: "acme" }
+}
+```
+
+Backend and cloud values must reduce to compile-time constants: literals,
+references to `const` values, and constant expressions. Terraform itself
+forbids interpolations in backend configuration, so runtime inputs, locals,
+resources, and function calls are rejected with diagnostics. Keys follow the
+normal object rule: unquoted camelCase keys convert to snake_case wire names,
+quoted keys keep their exact spelling. A second `backend` clause, a duplicate
+wire key inside one clause, and spreads or non-literal fields are all
+diagnosed. The clause lowers to ordinary Terraform JSON —
+`"backend": { "s3": { ... } }` or `"cloud": { ... }` inside the `terraform`
+object — and never changes resource addresses or state identity.
 
 ## Names, Types, and Expressions
 
