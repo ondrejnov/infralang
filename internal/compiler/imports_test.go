@@ -167,3 +167,76 @@ component Invalid() {
 		})
 	}
 }
+
+func TestPrepareBindsModuleVersionAndCompileEmitsIt(t *testing.T) {
+	t.Parallel()
+
+	file, parseDiagnostics := syntax.Parse("module-version.infra", `
+import module Vpc from "terraform-aws-modules/vpc/aws" version "~> 5.0"
+input region: string = "eu-central-1"
+module vpc = Vpc("vpc", { region })
+`)
+	if len(parseDiagnostics) != 0 {
+		t.Fatal(parseDiagnostics)
+	}
+	prepared, diagnostics := Prepare(file)
+	if len(diagnostics) != 0 {
+		t.Fatal(diagnostics)
+	}
+	module := prepared.Declarations[2].(*syntax.ModuleDeclaration)
+	if module.Source != "terraform-aws-modules/vpc/aws" || module.Version != "~> 5.0" {
+		t.Fatalf("bound module = %#v", module)
+	}
+	result, diagnostics := Compile(prepared)
+	if len(diagnostics) != 0 {
+		t.Fatal(diagnostics)
+	}
+	text := string(result)
+	if !strings.Contains(text, `"source": "terraform-aws-modules/vpc/aws"`) ||
+		!strings.Contains(text, `"version": "~\u003e 5.0"`) {
+		t.Fatalf("compiled module import:\n%s", text)
+	}
+}
+
+func TestPrepareRejectsInvalidModuleImportVersions(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"local source with version": `
+import module Child from "./child" version "~> 1.0"
+module child = Child("child", {})
+`,
+		"conflicting versions": `
+import module First from "registry.example/child" version "~> 1.0"
+import module Second from "registry.example/child" version "~> 2.0"
+module first = First("first", {})
+module second = Second("second", {})
+`,
+		"version versus unversioned": `
+import module First from "registry.example/child" version "~> 1.0"
+import module Second from "registry.example/child"
+module first = First("first", {})
+module second = Second("second", {})
+`,
+	}
+	for name, source := range tests {
+		t.Run(name, func(t *testing.T) {
+			file, parseDiagnostics := syntax.Parse(name+".infra", source)
+			if len(parseDiagnostics) != 0 {
+				t.Fatal(parseDiagnostics)
+			}
+			_, diagnostics := Prepare(file)
+			if len(diagnostics) == 0 {
+				t.Fatal("Prepare() returned no diagnostics")
+			}
+			if name == "local source with version" &&
+				!strings.Contains(diagnostics[0].Message, "cannot declare a version constraint") {
+				t.Fatalf("diagnostics = %v", diagnostics)
+			}
+			if strings.Contains(name, "versions") &&
+				!strings.Contains(diagnostics[0].Message, "conflicting version constraints") {
+				t.Fatalf("diagnostics = %v", diagnostics)
+			}
+		})
+	}
+}

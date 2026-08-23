@@ -375,6 +375,19 @@ Terraform label, arguments, providers, and metadata. Duplicate import names and
 unknown imported module names are rejected. Imports do not emit Terraform
 blocks; only `module handle = Name(label, arguments)` declarations do.
 
+A remote source accepts an optional version constraint that is emitted as the
+`version` setting of every `module` block using that import:
+
+```infra
+import module Vpc from "terraform-aws-modules/vpc/aws" version "~> 5.0"
+```
+
+Local sources beginning with `./`, `../`, or `/` must not declare a version;
+an empty constraint string is a parse error; and all imports of one remote
+source must use the same constraint (including unversioned references), because
+Terraform resolves one version per source. The version is recorded per
+`module` block and does not change state addresses by itself.
+
 ### Checked input forwarding
 
 `...inputs(value)` is valid only inside a module argument object:

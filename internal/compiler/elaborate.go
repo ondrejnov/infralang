@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -26,22 +27,29 @@ type indexedHandle struct {
 }
 
 type preparer struct {
-	file          *syntax.File
-	diagnostics   []syntax.Diagnostic
-	constants     map[string]*constBinding
-	typeAliases   map[string]*syntax.TypeAliasDeclaration
-	moduleImports map[string]*syntax.ModuleImportDeclaration
-	constantStack []string
-	cycleReported map[string]bool
-	indexed       map[string]map[string]indexedHandle
+	file                 *syntax.File
+	diagnostics          []syntax.Diagnostic
+	constants            map[string]*constBinding
+	typeAliases          map[string]*syntax.TypeAliasDeclaration
+	moduleImports        map[string]*syntax.ModuleImportDeclaration
+	moduleSourceVersions map[string]*moduleVersionBinding
+	constantStack        []string
+	cycleReported        map[string]bool
+	indexed              map[string]map[string]indexedHandle
+}
+
+type moduleVersionBinding struct {
+	declaration *syntax.ModuleImportDeclaration
+	Version     string
 }
 
 func Prepare(file *syntax.File) (*syntax.File, []syntax.Diagnostic) {
 	p := &preparer{
 		file: file, constants: make(map[string]*constBinding),
-		typeAliases:   make(map[string]*syntax.TypeAliasDeclaration),
-		moduleImports: make(map[string]*syntax.ModuleImportDeclaration),
-		cycleReported: make(map[string]bool), indexed: make(map[string]map[string]indexedHandle),
+		typeAliases:          make(map[string]*syntax.TypeAliasDeclaration),
+		moduleImports:        make(map[string]*syntax.ModuleImportDeclaration),
+		moduleSourceVersions: make(map[string]*moduleVersionBinding),
+		cycleReported:        make(map[string]bool), indexed: make(map[string]map[string]indexedHandle),
 	}
 	p.collectCompileTimeDeclarations()
 	p.bindModuleImports(file.Declarations, true)
@@ -110,6 +118,19 @@ func (p *preparer) collectCompileTimeDeclarations() {
 				p.addDiagnostic(value, message)
 				continue
 			}
+			if value.Version != "" && isLocalModuleSource(value.Source) {
+				p.addDiagnostic(value, fmt.Sprintf("local module source %q cannot declare a version constraint", value.Source))
+				continue
+			}
+			if previous := p.moduleSourceVersions[value.Source]; previous != nil && previous.Version != value.Version {
+				message := fmt.Sprintf("module source %q is imported with conflicting version constraints %q and %q", value.Source, previous.Version, value.Version)
+				p.addDiagnostic(previous.declaration, message)
+				p.addDiagnostic(value, message)
+				continue
+			}
+			if value.Version != "" {
+				p.moduleSourceVersions[value.Source] = &moduleVersionBinding{declaration: value, Version: value.Version}
+			}
 			p.moduleImports[value.Name] = value
 		}
 	}
@@ -129,6 +150,7 @@ func (p *preparer) bindModuleImports(declarations []syntax.Declaration, topLevel
 				continue
 			}
 			value.Source = imported.Source
+			value.Version = imported.Version
 		case *syntax.StaticForDeclaration:
 			p.bindModuleImports(value.Declarations, false)
 		case *syntax.ComponentDefinition:
@@ -650,6 +672,11 @@ func canonicalIndex(value constValue, allowNumber bool) (string, bool) {
 		return value.number.canonical()
 	}
 	return "", false
+}
+
+func isLocalModuleSource(source string) bool {
+	return strings.HasPrefix(source, "./") || strings.HasPrefix(source, "../") ||
+		strings.HasPrefix(source, "/") || filepath.IsAbs(source)
 }
 
 func syntheticHandleName(namespace, key string) string {

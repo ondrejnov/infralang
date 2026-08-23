@@ -181,6 +181,18 @@ Terraform sees one module block with `source = "./modules/web"` and the address
 `module.production`. The InfraLang instance handle is `web`; the Terraform
 label is `production`.
 
+A remote import can pin the module version, which is emitted as the module
+block's `version` setting:
+
+```infra
+import module Vpc from "terraform-aws-modules/vpc/aws" version "~> 5.0"
+module vpc = Vpc("network", { region })
+```
+
+Terraform sees `"source": "terraform-aws-modules/vpc/aws", "version": "~> 5.0"`.
+Local sources must not declare a version, and all imports of one remote source
+must use the same constraint.
+
 A component is different from a module. Terraform sees the component's expanded
 resources directly in the caller:
 

@@ -71,7 +71,7 @@ JSON, which has the same meaning as the equivalent HCL below.
 | `data item = aws.method("label", ...)`                    | `data "aws_type" "label" { ... }`             | `data.aws_type.label`                          |
 | `resource item = aws.method("label", ...)`                | `resource "aws_type" "label" { ... }`         | `aws_type.label`                               |
 | `import module Child from "source"`                       | no emitted block                              | compile-time import only                       |
-| `module child = Child("label", ...)`                      | `module "label" { source = "source" ... }`    | `module.label`                                 |
+| `module child = Child("label", ...)`                      | `module "label" { source = "source" version = "..." }` | `module.label`                                 |
 | `output value = expression`                               | `output "value" { value = expression }`       | root output                                    |
 | `moved ...`                                               | `moved { from = ... to = ... }`               | state migration metadata                       |
 | `type`, `const`, `static for`, `component`, `instantiate` | no direct Terraform block                     | expanded or erased before JSON                 |
@@ -208,7 +208,7 @@ Supported declarations include:
 - `configure localName = Provider({ arguments })`
 - `data handle = provider.method("label", { arguments })`
 - `resource handle = provider.method("label", { arguments }) [with { meta }] [when condition]`
-- `import module Name from "source"`
+- `import module Name from "source" [version "..."]`
 - `module handle = Name("label", { arguments }) [using { providers }] [with { meta }]`
 - `output name = expression with { description: "...", sensitive: true }`
 - `moved from "old.address" to "new.address"`
@@ -413,6 +413,18 @@ The import emits nothing. The instance remains a Terraform module and the
 explicit label contributes `module.child` to Terraform addresses. `using [aws]`
 or `using { aws }` is shorthand when the child provider slot and parent handle
 have the same name.
+
+A remote source accepts an optional version constraint emitted as the module
+block's `version` setting:
+
+```infra
+import module Vpc from "terraform-aws-modules/vpc/aws" version "~> 5.0"
+```
+
+Local sources beginning with `./`, `../`, or `/` must not declare a version,
+the constraint must be a non-empty string, and all imports of one remote source
+must use the same constraint (an unversioned reference conflicts with a pinned
+one). Terraform resolves one version per source.
 
 Local InfraLang child modules are checked for required and unknown inputs,
 structural input assignability, available outputs, provider slot names/source

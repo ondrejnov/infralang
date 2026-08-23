@@ -123,6 +123,28 @@ the directory rather than assuming a single-file boundary. Local interfaces
 check input names, types, outputs, provider slots, and cycles. A remote module
 is intentionally not inspected by InfraLang.
 
+## Remote Module with Pinned Version
+
+Import a registry module with an explicit version constraint; it is emitted as
+the module block's `version` setting:
+
+```infra
+import module Vpc from "terraform-aws-modules/vpc/aws" version "~> 5.0"
+
+input region: string = "eu-central-1"
+
+module network = Vpc("network", {
+  region: region,
+  name: "application",
+})
+```
+
+Rules: local sources beginning with `./`, `../`, or `/` must not declare a
+version; the constraint must be a non-empty string literal; and all imports of
+the same source must use the same constraint (an unversioned reference of the
+same source is also a conflict). The interface of a remote module remains an
+unchecked boundary resolved by Terraform.
+
 ## Checked Input Forwarding
 
 Define a structural type once and forward it to a local module:

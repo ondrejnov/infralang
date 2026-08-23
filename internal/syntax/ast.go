@@ -100,8 +100,9 @@ func (*TypeImportDeclaration) declarationNode() {}
 
 type ModuleImportDeclaration struct {
 	BaseNode
-	Name   string
-	Source string
+	Name    string
+	Source  string
+	Version string
 }
 
 func (*ModuleImportDeclaration) declarationNode() {}
@@ -283,6 +284,7 @@ type ModuleDeclaration struct {
 	Label           string
 	LabelExpression Expression
 	Source          string
+	Version         string
 	Arguments       *ObjectExpression
 	Providers       *ProviderMapping
 	MetaArguments   *ObjectExpression

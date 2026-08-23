@@ -373,7 +373,17 @@ func (p *parser) parseModuleImportDeclaration(start Position) Declaration {
 		return nil
 	}
 	source := p.expect(TokenString, "expected module source")
-	return &ModuleImportDeclaration{BaseNode: p.base(start, source.Span.End), Name: name.Lexeme, Source: source.Lexeme}
+	declaration := &ModuleImportDeclaration{BaseNode: p.base(start, source.Span.End), Name: name.Lexeme, Source: source.Lexeme}
+	if p.checkIdentifier("version") && p.lookaheadKind(1) == TokenString {
+		p.advance()
+		version := p.expect(TokenString, "expected version constraint string after 'version'")
+		if version.Lexeme == "" {
+			p.report(version, "module import version constraint must not be empty")
+		}
+		declaration.Version = version.Lexeme
+		declaration.BaseNode = p.base(start, version.Span.End)
+	}
+	return declaration
 }
 
 func (p *parser) parseTerraformDeclaration() Declaration {

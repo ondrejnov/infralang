@@ -794,6 +794,13 @@ func (c *compiler) compileModule(declaration *syntax.ModuleDeclaration) {
 	}
 	body := c.compileModuleArguments(declaration)
 	body["source"] = declaration.Source
+	if declaration.Version != "" {
+		if _, exists := body["version"]; exists {
+			c.addDiagnostic(declaration.GetSpan(), "module argument \"version\" conflicts with the imported module version constraint")
+		} else {
+			body["version"] = declaration.Version
+		}
+	}
 	suppliedProviders := make(map[string]*providerInfo)
 	if declaration.Providers != nil {
 		providers := make(map[string]any)

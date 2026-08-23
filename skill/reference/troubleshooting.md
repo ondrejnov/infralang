@@ -98,6 +98,16 @@ Type imports must:
 
 Type imports add no runtime declarations.
 
+### Module import version rejected
+
+A `version` clause on `import module` must:
+
+- be a non-empty string literal (`version ""` is a parse error);
+- not appear on a local source beginning with `./`, `../`, or `/`;
+- agree across all imports of the same remote source — pinning one import and
+  leaving another unversioned is also a conflict, because Terraform resolves
+  one version per source.
+
 ### `each` is unavailable
 
 `each` exists only inside a resource or module declaration with runtime

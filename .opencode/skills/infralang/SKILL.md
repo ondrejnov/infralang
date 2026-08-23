@@ -111,7 +111,7 @@ Declaration rules:
 - `configure name = Provider` declares an inherited provider slot in a child module and emits no provider block.
 - Resources and data sources use configured provider handles, not provider declaration names.
 - A resource accepts an optional third object for Terraform meta-arguments. A data source does not.
-- `import module Name from "source"` creates a directory-scoped module constructor and emits nothing by itself.
+- `import module Name from "source"` creates a directory-scoped module constructor and emits nothing by itself. A remote source accepts an optional `version "<constraint>"` clause emitted as the module block's `version`; local `./`, `../`, or `/` sources must not declare one, the constraint must be non-empty, and all imports of one source must agree on it.
 - A module instance has an InfraLang handle and a separate Terraform label: `module sourceName = Name(labelExpression, arguments)`.
 - Module `using` maps child provider slot names to parent configuration handles. Array shorthand such as `using [aws]` infers each child slot from the configuration's provider local name; it equals `using { aws: aws }` only when that inferred name and the handle are both `aws`.
 - Module `with` holds Terraform meta-arguments such as `forEach` and `dependsOn`.

@@ -33,6 +33,47 @@ import module Host from "./host"
 	}
 }
 
+func TestParseModuleImportWithVersion(t *testing.T) {
+	t.Parallel()
+
+	file, diagnostics := Parse("versions.infra", `
+import module Vpc from "terraform-aws-modules/vpc/aws" version "~> 5.0"
+import module Local from "./local"
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("Parse() diagnostics = %v", diagnostics)
+	}
+	if len(file.Declarations) != 2 {
+		t.Fatalf("declarations = %#v", file.Declarations)
+	}
+	remote := file.Declarations[0].(*ModuleImportDeclaration)
+	if remote.Name != "Vpc" || remote.Source != "terraform-aws-modules/vpc/aws" || remote.Version != "~> 5.0" {
+		t.Fatalf("remote module import = %#v", remote)
+	}
+	local := file.Declarations[1].(*ModuleImportDeclaration)
+	if local.Source != "./local" || local.Version != "" {
+		t.Fatalf("local module import = %#v", local)
+	}
+}
+
+func TestParseRejectsMalformedModuleImportVersions(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"missing constraint":    `import module Vpc from "remote/vpc" version`,
+		"non-string constraint": `import module Vpc from "remote/vpc" version ~> 5.0`,
+		"empty constraint":      `import module Vpc from "remote/vpc" version ""`,
+	}
+	for name, source := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if _, diagnostics := Parse("invalid-version.infra", source); len(diagnostics) == 0 {
+				t.Fatal("Parse() returned no diagnostics")
+			}
+		})
+	}
+}
+
 func TestParseRejectsMalformedTypeImports(t *testing.T) {
 	t.Parallel()
 

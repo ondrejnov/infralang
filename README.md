@@ -410,8 +410,9 @@ InfraLang's three implemented language phases are cumulative:
    ordered spreads and conditional let assignments, typed `each`, checked local module
    interfaces, and `...inputs(value)` forwarding.
 3. Phase 3 adds exact constants, deterministic `static for`, compile-time
-   labels and indexed handles, canonical type and module imports, and hygienic
-   reusable components with virtual exports.
+   labels and indexed handles, canonical type and module imports with optional
+   remote version constraints, and hygienic reusable components with virtual
+   exports.
 
 Compile-time declarations erase completely. Terraform JSON contains only
 ordinary Terraform settings, providers, variables, locals, resources, data
