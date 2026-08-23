@@ -461,15 +461,21 @@ go build -o bin/infralang ./cmd/infralang
 ```shell
 bin/infralang check SOURCE.infra
 bin/infralang check MODULE_DIR
+bin/infralang fmt SOURCE.infra
 bin/infralang build SOURCE.infra
 bin/infralang build MODULE_DIR
 bin/infralang build -stdout SOURCE.infra
 bin/infralang build -o OUTPUT.tf.json SOURCE.infra
+bin/infralang init|validate|plan|apply|destroy [TERRAFORM_ARGS...]
 bin/infralang version
 bin/infralang help
 ```
 
 Place build flags before the source path. `-o` and `-stdout` are mutually exclusive and apply only to single-file `.infra` builds. `-h`, `--help`, `-version`, and `--version` are accepted aliases.
+
+`fmt` atomically formats one valid `.infra` file in place; it prints the filename when the file changed. `init`, `validate`, `plan`, `apply`, and `destroy` first compile the InfraLang source in the current directory, then delegate to Terraform with all remaining arguments and its normal stdin, stdout, stderr, and exit status. Never run `apply` or `destroy` without explicit user approval.
+
+When compiling a directory or module project, the CLI also runs `terraform providers schema -json` (errors are ignored if Terraform is unavailable) so provider nested blocks can be recognized and lowered as arrays. Provider resource/data arguments stay dynamically typed.
 
 Diagnostics are sorted and printed with file, line, column, message, source-line context, and a caret. Internal diagnostic codes are not printed by the CLI. Parse errors stop compiler execution, and any diagnostic prevents artifact emission.
 
@@ -519,6 +525,8 @@ Add focused tests for syntax, diagnostics, compile-time preparation, structural 
 - Structural types and local interfaces: `internal/compiler/types.go`, `internal/compiler/interfaces.go`
 - Project graph and imports: `internal/project/graph.go`, `internal/project/imports.go`, `internal/project/project.go`
 - CLI and directory artifact writing: `cmd/infralang/main.go`
+- Formatter used by `fmt`: `internal/formatter/formatter.go`
+- Components vs. modules guide: `docs/component_vs_module.md`; checked input forwarding: `docs/input-forwarding.md`
 - End-to-end typed component example: `examples/libvirt/`
 - Small language example: `examples/basic/main.infra`
 - Provider alias example: `examples/provider-alias/`

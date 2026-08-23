@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
 	"os/exec"
 	"sort"
 	"strings"
@@ -107,20 +109,24 @@ func (manager *schemaManager) ensure(directory string) {
 	manager.mu.Unlock()
 
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 		var providers map[string]*providerSchema
 		for _, executable := range []string{"terraform", "tofu"} {
 			if _, err := exec.LookPath(executable); err != nil {
+				fmt.Fprintf(os.Stderr, "infralang-lsp: %q not found in PATH\n", executable)
 				continue
 			}
+			fmt.Fprintf(os.Stderr, "infralang-lsp: loading provider schemas via %q in %s\n", executable, directory)
 			command := exec.CommandContext(ctx, executable, "providers", "schema", "-json")
 			command.Dir = directory
 			output, err := command.Output()
 			if err == nil {
 				providers = parseTerraformSchemas(output)
+				fmt.Fprintf(os.Stderr, "infralang-lsp: loaded %d provider schemas\n", len(providers))
 				break
 			}
+			fmt.Fprintf(os.Stderr, "infralang-lsp: %q providers schema failed: %v\n", executable, err)
 		}
 		manager.mu.Lock()
 		entry.loading = false
