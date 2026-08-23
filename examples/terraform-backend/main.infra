@@ -7,7 +7,6 @@ terraform {
     bucket: "example-tfstate",
     key: f"{statePrefix}/terraform.tfstate",
     region: "eu-central-1",
-    dynamodbTable: lockTable,
     encrypt: true,
   }
 }
