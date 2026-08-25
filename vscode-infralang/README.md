@@ -58,7 +58,7 @@ Release targets are `win32-x64`, `win32-arm64`, `linux-x64`, `linux-arm64`, `lin
 | `infralang.languageServer.enable` | `true` | Starts the language client when the extension activates. |
 | `infralang.languageServer.path` | `""` | Executable path or command. Empty selects the bundled platform binary. `~/...` is expanded. |
 | `infralang.languageServer.args` | `[]` | Arguments passed to the server process. |
-| `infralang.languageServer.providerSchema.enable` | `true` | Loads locally installed provider schemas for completion in trusted workspaces. |
+| `infralang.languageServer.providerSchema.enable` | `true` | Loads provider schemas for completion in trusted workspaces, using an isolated cache when needed. |
 
 Run **InfraLang: Restart Language Server** after changing the server path or arguments. Disabling the server takes effect after a restart or window reload.
 
@@ -66,7 +66,7 @@ Run **InfraLang: Restart Language Server** after changing the server path or arg
 
 InfraLang preserves Terraform and OpenTofu's provider ecosystem, but the InfraLang compiler itself does not load provider schemas. Provider method names are lowered from source-style names such as `aws.s3Bucket` to Terraform types such as `aws_s3_bucket`; unquoted argument keys are similarly converted to snake case.
 
-In a trusted workspace, the language server runs `terraform providers schema -json`, falling back to `tofu providers schema -json`, in the current module directory. It does not initialize or download providers. A successful query supplies completion metadata for provider configuration, resource and data source names, writable arguments, nested block names, and result attributes. Failed queries are retried after a short cache interval. Disable this behavior with `infralang.languageServer.providerSchema.enable`.
+In a trusted workspace, the language server first runs `terraform providers schema -json`, falling back to `tofu providers schema -json`, in the current module directory. If the declared providers are not initialized there, it creates a minimal `required_providers` configuration under the user's InfraLang cache, runs `init -backend=false` in that isolated directory, and reads the schemas from there. This may download and execute declared provider plugins, but it does not create `.terraform`, lock files, generated configuration, backends, or state in the project. A successful query supplies completion metadata for provider configuration, resource and data source names, writable arguments, nested block names, and result attributes. Changes under the project's `.terraform` directory and `.terraform.lock.hcl` invalidate the schema cache automatically. Disable this behavior with `infralang.languageServer.providerSchema.enable`.
 
 Schema completion is not schema validation. Provider-specific value constraints, remote module interface validation, arbitrary Terraform function names, and Terraform graph semantics remain Terraform or OpenTofu's responsibility. Run `terraform validate` or `tofu validate`, and review a plan, after generating Terraform JSON.
 
@@ -77,7 +77,7 @@ After `terraform init` or `tofu init`, the language server reads the local `.ter
 ## Limitations
 
 - Unsaved diagnostics combine all immediate `.infra` files in the edited directory. Full recursive local-module and type-import project validation still requires `infralang check`.
-- Provider schema completion requires providers already installed for the module and may take a few seconds on first use.
+- Provider schema completion may take longer on first use while declared providers are downloaded into the isolated cache.
 - Terraform module input completion requires the module to be present in the local initialization manifest.
-- The extension only invokes Terraform/OpenTofu for the read-only provider schema query described above. It never initializes providers, validates generated Terraform, plans, applies, or manages state.
+- The extension only invokes Terraform/OpenTofu for the provider schema query and isolated, backend-free cache initialization described above. It never initializes the project, validates generated Terraform, plans, applies, or manages state.
 - There is no browser/web extension, telemetry, automatic binary download, or remote service integration.

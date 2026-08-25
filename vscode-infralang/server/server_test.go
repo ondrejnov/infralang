@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestFramingRoundTrip(t *testing.T) {
@@ -399,6 +400,40 @@ const hosts: map<HostDefinition> = {
 	}
 }
 
+func TestCompletionUsesImportedStructuralTypeInInputDefault(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "main.infra")
+	writeTestFile(t, filepath.Join(root, "types.infra"), `
+export type VmDefaults = object {
+  baseImagePath: string,
+  remoteUser?: string = "root",
+}
+`)
+	workspace := newWorkspace()
+	workspace.setRoots([]string{root})
+	if err := workspace.scan(); err != nil {
+		t.Fatalf("scan workspace: %v", err)
+	}
+	source := `import type { VmDefaults as PokusVmDefaults } from "./types.infra"
+input vmDefaults: PokusVmDefaults = {
+  bas
+}`
+	uri := pathToURI(path)
+	if _, err := workspace.open(uri, source, 1); err != nil {
+		t.Fatalf("open input default: %v", err)
+	}
+	offset := strings.Index(source, "bas\n") + len("bas")
+	labels := completionLabels((&server{workspace: workspace}).completions(TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: uri}, Position: positionAt(source, offset),
+	}))
+	if !labels["baseImagePath"] || !labels["remoteUser"] {
+		t.Fatalf("input default completions = %v", labels)
+	}
+	if labels["input"] || labels["vmDefaults"] {
+		t.Fatalf("non-field completions leaked into input default keys: %v", labels)
+	}
+}
+
 func TestCompletionUsesProviderSchemaCache(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "main.infra")
@@ -415,7 +450,9 @@ resource bucket = aws.s3Bucket("bucket", {
 	if _, err := workspace.open(uri, source, 1); err != nil {
 		t.Fatalf("open document: %v", err)
 	}
-	workspace.schemas.entries[root] = &schemaCacheEntry{providers: parseTerraformSchemas([]byte(`{
+	workspace.schemas.entries[root] = &schemaCacheEntry{
+		requirements: providerRequirementKey([]providerRequirement{{LocalName: "aws", Source: "hashicorp/aws"}}),
+		providers: parseTerraformSchemas([]byte(`{
   "provider_schemas": {
     "registry.terraform.io/hashicorp/aws": {
       "provider": {"block": {
@@ -441,7 +478,8 @@ resource bucket = aws.s3Bucket("bucket", {
       }
     }
   }
-}`))}
+}`)),
+	}
 	server := &server{workspace: workspace}
 	position := positionAt(source, strings.Index(source, "  \n}")+2)
 	labels := completionLabels(server.completions(TextDocumentPositionParams{TextDocument: TextDocumentIdentifier{URI: uri}, Position: position}))
@@ -654,14 +692,17 @@ func TestProviderMethodsAreFilteredByDeclarationKind(t *testing.T) {
 	path := filepath.Join(root, "main.infra")
 	workspace := newWorkspace()
 	workspace.setRoots([]string{root})
-	workspace.schemas.entries[root] = &schemaCacheEntry{providers: parseTerraformSchemas([]byte(`{
+	workspace.schemas.entries[root] = &schemaCacheEntry{
+		requirements: providerRequirementKey([]providerRequirement{{LocalName: "aws", Source: "hashicorp/aws"}}),
+		providers: parseTerraformSchemas([]byte(`{
   "provider_schemas": {
     "registry.terraform.io/hashicorp/aws": {
       "resource_schemas": {"aws_s3_bucket": {"block": {}}},
       "data_source_schemas": {"aws_caller_identity": {"block": {}}}
     }
   }
-}`))}
+}`)),
+	}
 	server := &server{workspace: workspace}
 
 	for _, test := range []struct {
@@ -772,6 +813,90 @@ func TestWatchedFileChangesRefreshWorkspaceIndex(t *testing.T) {
 	server.handle(rpcMessage{JSONRPC: "2.0", Method: "workspace/didChangeWatchedFiles", Params: params})
 	if server.visibleSymbols(root)["second"] != nil {
 		t.Fatalf("deleted watched file remained indexed")
+	}
+}
+
+func TestProviderSchemaDirectoryRecognizesTerraformArtifacts(t *testing.T) {
+	root := t.TempDir()
+	for _, path := range []string{
+		filepath.Join(root, ".terraform.lock.hcl"),
+		filepath.Join(root, ".terraform", "providers", "registry.terraform.io", "hashicorp", "aws", "6.0.0", "provider"),
+		filepath.Join(root, ".terraform", "modules", "modules.json"),
+	} {
+		if got := providerSchemaDirectory(path); got != root {
+			t.Errorf("providerSchemaDirectory(%q) = %q, want %q", path, got, root)
+		}
+	}
+	if got := providerSchemaDirectory(filepath.Join(root, "main.infra")); got != "" {
+		t.Fatalf("providerSchemaDirectory(main.infra) = %q, want empty", got)
+	}
+}
+
+func TestSchemaManagerInvalidationDropsCachedAttempt(t *testing.T) {
+	manager := newSchemaManager()
+	directory := t.TempDir()
+	manager.entries[directory] = &schemaCacheEntry{attemptedAt: time.Now()}
+	manager.invalidate(directory)
+	if manager.entries[directory] != nil {
+		t.Fatalf("schema cache entry remained after invalidation")
+	}
+}
+
+func TestProviderRequirementsAndIsolatedCacheConfiguration(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "main.infra"), `
+provider AWS from "hashicorp/aws" version "~> 6.0"
+provider Lvm from "github.com/ondrejnov/lvm" version "0.5.0"
+provider Terraform from "terraform.io/builtin/terraform"
+`)
+	workspace := newWorkspace()
+	workspace.setRoots([]string{root})
+	if err := workspace.scan(); err != nil {
+		t.Fatalf("scan workspace: %v", err)
+	}
+	requirements := (&server{workspace: workspace}).providerRequirements(root)
+	if len(requirements) != 3 {
+		t.Fatalf("provider requirements = %#v, want three providers", requirements)
+	}
+	if requirements[0] != (providerRequirement{LocalName: "aws", Source: "hashicorp/aws", Version: "~> 6.0"}) ||
+		requirements[1] != (providerRequirement{LocalName: "lvm", Source: "github.com/ondrejnov/lvm", Version: "0.5.0"}) ||
+		requirements[2] != (providerRequirement{LocalName: "terraform", Source: "terraform.io/builtin/terraform"}) {
+		t.Fatalf("provider requirements = %#v", requirements)
+	}
+
+	configuration, err := providerSchemaCacheConfiguration(requirements)
+	if err != nil {
+		t.Fatalf("build provider cache configuration: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(configuration, &decoded); err != nil {
+		t.Fatalf("decode provider cache configuration: %v", err)
+	}
+	terraform := decoded["terraform"].(map[string]any)
+	required := terraform["required_providers"].(map[string]any)
+	aws := required["aws"].(map[string]any)
+	if aws["source"] != "hashicorp/aws" || aws["version"] != "~> 6.0" {
+		t.Fatalf("AWS cache requirement = %#v", aws)
+	}
+	resource := decoded["resource"].(map[string]any)
+	if resource["terraform_data"] == nil {
+		t.Fatalf("built-in provider schema resource is missing: %#v", decoded)
+	}
+
+	providers := map[string]*providerSchema{
+		"registry.terraform.io/hashicorp/aws": {},
+		"github.com/ondrejnov/lvm":            {},
+		"terraform.io/builtin/terraform":      {},
+	}
+	if !providerSchemasCoverRequirements(providers, requirements) {
+		t.Fatalf("complete provider schemas were rejected")
+	}
+	delete(providers, "github.com/ondrejnov/lvm")
+	if providerSchemasCoverRequirements(providers, requirements) {
+		t.Fatalf("incomplete provider schemas were accepted")
+	}
+	if !providerSourceMatches("registry.terraform.io/hashicorp/aws", "registry.terraform.io/hashicorp/aws") {
+		t.Fatalf("fully qualified registry provider sources did not match")
 	}
 }
 

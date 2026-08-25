@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -66,10 +68,17 @@ type providerSchema struct {
 }
 
 type schemaCacheEntry struct {
-	loading     bool
-	attemptedAt time.Time
-	done        chan struct{}
-	providers   map[string]*providerSchema
+	loading      bool
+	attemptedAt  time.Time
+	done         chan struct{}
+	providers    map[string]*providerSchema
+	requirements string
+}
+
+type providerRequirement struct {
+	LocalName string
+	Source    string
+	Version   string
 }
 
 type schemaManager struct {
@@ -88,15 +97,22 @@ func (manager *schemaManager) setEnabled(enabled bool) {
 	manager.mu.Unlock()
 }
 
-func (manager *schemaManager) ensure(directory string) {
+func (manager *schemaManager) invalidate(directory string) {
+	manager.mu.Lock()
+	delete(manager.entries, directory)
+	manager.mu.Unlock()
+}
+
+func (manager *schemaManager) ensure(directory string, requirements []providerRequirement) {
+	requirementKey := providerRequirementKey(requirements)
 	manager.mu.Lock()
 	if !manager.enabled {
 		manager.mu.Unlock()
 		return
 	}
 	entry := manager.entries[directory]
-	if entry == nil {
-		entry = &schemaCacheEntry{}
+	if entry == nil || entry.requirements != requirementKey {
+		entry = &schemaCacheEntry{requirements: requirementKey}
 		manager.entries[directory] = entry
 	}
 	if entry.loading || entry.providers != nil || (!entry.attemptedAt.IsZero() && time.Since(entry.attemptedAt) < 30*time.Second) {
@@ -109,25 +125,7 @@ func (manager *schemaManager) ensure(directory string) {
 	manager.mu.Unlock()
 
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
-		var providers map[string]*providerSchema
-		for _, executable := range []string{"terraform", "tofu"} {
-			if _, err := exec.LookPath(executable); err != nil {
-				fmt.Fprintf(os.Stderr, "infralang-lsp: %q not found in PATH\n", executable)
-				continue
-			}
-			fmt.Fprintf(os.Stderr, "infralang-lsp: loading provider schemas via %q in %s\n", executable, directory)
-			command := exec.CommandContext(ctx, executable, "providers", "schema", "-json")
-			command.Dir = directory
-			output, err := command.Output()
-			if err == nil {
-				providers = parseTerraformSchemas(output)
-				fmt.Fprintf(os.Stderr, "infralang-lsp: loaded %d provider schemas\n", len(providers))
-				break
-			}
-			fmt.Fprintf(os.Stderr, "infralang-lsp: %q providers schema failed: %v\n", executable, err)
-		}
+		providers := loadProviderSchemas(directory, requirements, requirementKey)
 		manager.mu.Lock()
 		entry.loading = false
 		entry.providers = providers
@@ -136,8 +134,8 @@ func (manager *schemaManager) ensure(directory string) {
 	}()
 }
 
-func (manager *schemaManager) await(directory string) {
-	manager.ensure(directory)
+func (manager *schemaManager) await(directory string, requirements []providerRequirement) {
+	manager.ensure(directory, requirements)
 	manager.mu.RLock()
 	entry := manager.entries[directory]
 	if entry == nil || !entry.loading {
@@ -149,8 +147,8 @@ func (manager *schemaManager) await(directory string) {
 	<-done
 }
 
-func (manager *schemaManager) provider(directory, source string) *providerSchema {
-	manager.await(directory)
+func (manager *schemaManager) provider(directory, source string, requirements []providerRequirement) *providerSchema {
+	manager.await(directory, requirements)
 	manager.mu.RLock()
 	defer manager.mu.RUnlock()
 	entry := manager.entries[directory]
@@ -158,8 +156,7 @@ func (manager *schemaManager) provider(directory, source string) *providerSchema
 		return nil
 	}
 	for key, provider := range entry.providers {
-		normalized := strings.TrimPrefix(key, "registry.terraform.io/")
-		if normalized == source || strings.HasSuffix(normalized, "/"+source) {
+		if providerSourceMatches(key, source) {
 			return provider
 		}
 	}
@@ -170,6 +167,136 @@ func (manager *schemaManager) provider(directory, source string) *providerSchema
 		}
 	}
 	return nil
+}
+
+func loadProviderSchemas(directory string, requirements []providerRequirement, requirementKey string) map[string]*providerSchema {
+	for _, executable := range []string{"terraform", "tofu"} {
+		if _, err := exec.LookPath(executable); err != nil {
+			fmt.Fprintf(os.Stderr, "infralang-lsp: %q not found in PATH\n", executable)
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "infralang-lsp: loading provider schemas via %q in %s\n", executable, directory)
+		providers, err := runProviderSchemaCommand(executable, directory)
+		if err == nil && providerSchemasCoverRequirements(providers, requirements) {
+			fmt.Fprintf(os.Stderr, "infralang-lsp: loaded %d provider schemas from project\n", len(providers))
+			return providers
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "infralang-lsp: %q providers schema failed: %v\n", executable, err)
+		}
+		if len(requirements) == 0 {
+			continue
+		}
+		providers, err = loadCachedProviderSchemas(executable, requirements, requirementKey)
+		if err == nil && providerSchemasCoverRequirements(providers, requirements) {
+			fmt.Fprintf(os.Stderr, "infralang-lsp: loaded %d provider schemas from isolated cache\n", len(providers))
+			return providers
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "infralang-lsp: cached provider schema load via %q failed: %v\n", executable, err)
+		}
+	}
+	return nil
+}
+
+func runProviderSchemaCommand(executable, directory string) (map[string]*providerSchema, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, executable, "providers", "schema", "-json")
+	command.Dir = directory
+	command.Env = append(os.Environ(), "TF_IN_AUTOMATION=1")
+	output, err := command.Output()
+	if err != nil {
+		return nil, err
+	}
+	return parseTerraformSchemas(output), nil
+}
+
+func loadCachedProviderSchemas(executable string, requirements []providerRequirement, requirementKey string) (map[string]*providerSchema, error) {
+	cacheRoot, err := os.UserCacheDir()
+	if err != nil {
+		return nil, err
+	}
+	directory := filepath.Join(cacheRoot, "infralang", "provider-schemas", executable+"-"+requirementKey)
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		return nil, err
+	}
+	configuration, err := providerSchemaCacheConfiguration(requirements)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(directory, "main.tf.json"), configuration, 0o644); err != nil {
+		return nil, err
+	}
+	if providers, err := runProviderSchemaCommand(executable, directory); err == nil && providerSchemasCoverRequirements(providers, requirements) {
+		return providers, nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	command := exec.CommandContext(ctx, executable, "init", "-backend=false", "-input=false", "-no-color")
+	command.Dir = directory
+	command.Env = append(os.Environ(), "TF_IN_AUTOMATION=1")
+	if output, err := command.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("init isolated provider cache: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return runProviderSchemaCommand(executable, directory)
+}
+
+func providerSchemaCacheConfiguration(requirements []providerRequirement) ([]byte, error) {
+	required := make(map[string]any, len(requirements))
+	configuration := make(map[string]any)
+	for _, requirement := range requirements {
+		if requirement.Source == "terraform.io/builtin/terraform" {
+			configuration["resource"] = map[string]any{
+				"terraform_data": map[string]any{"infralang_schema": map[string]any{}},
+			}
+			continue
+		}
+		provider := map[string]any{"source": requirement.Source}
+		if requirement.Version != "" {
+			provider["version"] = requirement.Version
+		}
+		required[requirement.LocalName] = provider
+	}
+	if len(required) > 0 {
+		configuration["terraform"] = map[string]any{"required_providers": required}
+	}
+	result, err := json.MarshalIndent(configuration, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(result, '\n'), nil
+}
+
+func providerRequirementKey(requirements []providerRequirement) string {
+	hash := sha256.New()
+	for _, requirement := range requirements {
+		fmt.Fprintf(hash, "%s\x00%s\x00%s\x00", requirement.LocalName, requirement.Source, requirement.Version)
+	}
+	return fmt.Sprintf("%x", hash.Sum(nil))[:16]
+}
+
+func providerSchemasCoverRequirements(providers map[string]*providerSchema, requirements []providerRequirement) bool {
+	for _, requirement := range requirements {
+		found := false
+		for source := range providers {
+			if providerSourceMatches(source, requirement.Source) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func providerSourceMatches(schemaSource, declaredSource string) bool {
+	schemaSource = strings.TrimPrefix(schemaSource, "registry.terraform.io/")
+	declaredSource = strings.TrimPrefix(declaredSource, "registry.terraform.io/")
+	return schemaSource == declaredSource || strings.HasSuffix(schemaSource, "/"+declaredSource)
 }
 
 func providerLocalName(source string) string {

@@ -15,7 +15,7 @@ const restartCommand = "infralang.restartLanguageServer";
 
 let client: LanguageClient | undefined;
 let outputChannel: vscode.OutputChannel | undefined;
-let fileWatcher: vscode.FileSystemWatcher | undefined;
+let fileWatchers: vscode.FileSystemWatcher[] = [];
 
 export async function activate(
   context: vscode.ExtensionContext,
@@ -71,8 +71,13 @@ async function startLanguageClient(
     }
   }
 
-  fileWatcher?.dispose();
-  fileWatcher = vscode.workspace.createFileSystemWatcher("**/*.infra");
+  disposeFileWatchers();
+  fileWatchers = [
+    vscode.workspace.createFileSystemWatcher("**/*.infra"),
+    vscode.workspace.createFileSystemWatcher("**/.terraform.lock.hcl"),
+    vscode.workspace.createFileSystemWatcher("**/.terraform/providers/**/*"),
+    vscode.workspace.createFileSystemWatcher("**/.terraform/modules/**/*"),
+  ];
 
   const serverOptions: ServerOptions = {
     command,
@@ -89,7 +94,7 @@ async function startLanguageClient(
     outputChannel: channel,
     revealOutputChannelOn: RevealOutputChannelOn.Never,
     synchronize: {
-      fileEvents: fileWatcher,
+      fileEvents: fileWatchers,
     },
     initializationOptions: {
       providerSchemas:
@@ -115,8 +120,7 @@ async function startLanguageClient(
     if (client === nextClient) {
       client = undefined;
     }
-    fileWatcher?.dispose();
-    fileWatcher = undefined;
+    disposeFileWatchers();
     const detail = error instanceof Error ? error.message : String(error);
     const message = `Failed to start the InfraLang language server: ${detail}`;
     channel.appendLine(message);
@@ -138,7 +142,13 @@ async function stopLanguageClient(): Promise<void> {
       await currentClient.stop();
     }
   } finally {
-    fileWatcher?.dispose();
-    fileWatcher = undefined;
+    disposeFileWatchers();
   }
+}
+
+function disposeFileWatchers(): void {
+  for (const watcher of fileWatchers) {
+    watcher.dispose();
+  }
+  fileWatchers = [];
 }

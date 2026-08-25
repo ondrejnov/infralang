@@ -135,7 +135,7 @@ func (server *server) handle(message rpcMessage) {
 		}
 		if decodeParams(message.Params, &params) {
 			if index, err := server.workspace.open(params.TextDocument.URI, params.TextDocument.Text, params.TextDocument.Version); err == nil {
-				server.workspace.schemas.ensure(filepath.Dir(index.Path))
+				server.ensureProviderSchemas(filepath.Dir(index.Path))
 				server.publishDirectoryDiagnostics(filepath.Dir(index.Path))
 			}
 		}
@@ -190,19 +190,31 @@ func (server *server) handle(message rpcMessage) {
 			return
 		}
 		directories := make(map[string]bool)
+		schemaDirectories := make(map[string]bool)
 		for _, change := range params.Changes {
 			if path, err := uriToPath(change.URI); err == nil {
-				directories[filepath.Dir(path)] = true
-				if change.Type == 3 {
+				if filepath.Ext(path) == ".infra" {
+					directories[filepath.Dir(path)] = true
+				}
+				if change.Type == 3 && filepath.Ext(path) == ".infra" {
 					server.notify("textDocument/publishDiagnostics", map[string]any{"uri": change.URI, "diagnostics": []Diagnostic{}})
+				}
+				if directory := providerSchemaDirectory(path); directory != "" {
+					schemaDirectories[directory] = true
 				}
 			}
 		}
-		if err := server.workspace.scan(); err != nil {
-			return
+		if len(directories) > 0 {
+			if err := server.workspace.scan(); err != nil {
+				return
+			}
 		}
 		for directory := range directories {
 			server.publishDirectoryDiagnostics(directory)
+		}
+		for directory := range schemaDirectories {
+			server.workspace.schemas.invalidate(directory)
+			server.ensureProviderSchemas(directory)
 		}
 	case "textDocument/completion":
 		var params TextDocumentPositionParams
@@ -257,6 +269,19 @@ func (server *server) handle(message rpcMessage) {
 			server.writeError(message.ID, errMethodNotFound, "method not found: "+message.Method)
 		}
 	}
+}
+
+func providerSchemaDirectory(path string) string {
+	path = filepath.Clean(path)
+	if filepath.Base(path) == ".terraform.lock.hcl" {
+		return filepath.Dir(path)
+	}
+	for directory := filepath.Dir(path); directory != filepath.Dir(directory); directory = filepath.Dir(directory) {
+		if filepath.Base(directory) == ".terraform" {
+			return filepath.Dir(directory)
+		}
+	}
+	return ""
 }
 
 func (server *server) formatDocument(uri string) []TextEdit {
@@ -515,7 +540,7 @@ func (server *server) completions(params TextDocumentPositionParams) []Completio
 		}
 		for _, context := range index.Contexts {
 			if offset >= context.Span.Start.Offset && offset <= context.Span.End.Offset {
-				server.workspace.schemas.ensure(directory)
+				server.ensureProviderSchemas(directory)
 				schemaItems, schemaKeyContext := server.schemaArgumentCompletions(directory, context, source, offset)
 				keyContext = keyContext || schemaKeyContext
 				for _, schemaItem := range schemaItems {
@@ -566,9 +591,49 @@ func (server *server) providerSource(directory string, config *symbol) string {
 	return ""
 }
 
+func (server *server) providerRequirements(directory string) []providerRequirement {
+	byLocalName := make(map[string]providerRequirement)
+	for _, index := range server.workspace.directoryFiles(directory) {
+		if index.File == nil {
+			continue
+		}
+		for _, declaration := range index.File.Declarations {
+			provider, ok := declaration.(*syntax.ProviderDeclaration)
+			if !ok {
+				continue
+			}
+			localName := syntax.SourceNameToWire(providerLocalName(provider.Source))
+			if localName == "" {
+				continue
+			}
+			byLocalName[localName] = providerRequirement{
+				LocalName: localName,
+				Source:    provider.Source,
+				Version:   provider.Version,
+			}
+		}
+	}
+	result := make([]providerRequirement, 0, len(byLocalName))
+	for _, requirement := range byLocalName {
+		result = append(result, requirement)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].LocalName < result[j].LocalName
+	})
+	return result
+}
+
+func (server *server) ensureProviderSchemas(directory string) {
+	server.workspace.schemas.ensure(directory, server.providerRequirements(directory))
+}
+
+func (server *server) providerSchema(directory, source string) *providerSchema {
+	return server.workspace.schemas.provider(directory, source, server.providerRequirements(directory))
+}
+
 func (server *server) providerMethodCompletions(directory string, config *symbol, declarationKind string) []CompletionItem {
 	source := server.providerSource(directory, config)
-	schema := server.workspace.schemas.provider(directory, source)
+	schema := server.providerSchema(directory, source)
 	if schema == nil {
 		return []CompletionItem{}
 	}
@@ -610,7 +675,7 @@ func (server *server) schemaArgumentCompletions(directory string, context schema
 		return nil, false
 	}
 	source := server.providerSource(directory, config)
-	schema := server.workspace.schemas.provider(directory, source)
+	schema := server.providerSchema(directory, source)
 	if schema == nil {
 		return nil, false
 	}
@@ -680,7 +745,7 @@ func (server *server) schemaMemberCompletions(directory string, root *symbol) []
 		return nil
 	}
 	source := server.providerSource(directory, config)
-	schema := server.workspace.schemas.provider(directory, source)
+	schema := server.providerSchema(directory, source)
 	if schema == nil {
 		return nil
 	}

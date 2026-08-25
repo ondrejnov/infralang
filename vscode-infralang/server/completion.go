@@ -21,11 +21,18 @@ func (server *server) structuralArgumentCompletions(path, source string, offset 
 	}
 	directory := filepath.Dir(path)
 	for _, declaration := range index.File.Declarations {
-		constant, ok := declaration.(*syntax.ConstDeclaration)
-		if !ok || constant.Type == nil || !spanContains(constant.Value.GetSpan(), offset) {
+		var expression syntax.Expression
+		var expressionType *syntax.TypeExpression
+		switch value := declaration.(type) {
+		case *syntax.ConstDeclaration:
+			expression, expressionType = value.Value, value.Type
+		case *syntax.InputDeclaration:
+			expression, expressionType = value.Default, value.Type
+		}
+		if expression == nil || expressionType == nil || !spanContains(expression.GetSpan(), offset) {
 			continue
 		}
-		object, expected := server.expectedObjectAt(constant.Value, completionType{expression: constant.Type, directory: directory}, offset)
+		object, expected := server.expectedObjectAt(expression, completionType{expression: expressionType, directory: directory}, offset)
 		if object == nil || expected.expression == nil || expected.expression.Name != "object" {
 			return nil, false
 		}
