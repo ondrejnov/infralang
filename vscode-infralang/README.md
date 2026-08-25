@@ -10,7 +10,7 @@ Desktop Visual Studio Code language support for `.infra` files.
 - Highlights Go-escaped strings and `f"...{expression}..."` interpolation, including doubled literal braces.
 - Starts an InfraLang language server over stdio and synchronizes open documents and all create, change, and delete events for `**/*.infra` files.
 - Reports lexer, parser, name, type, component, and immediate-directory module diagnostics from unsaved editor contents.
-- Completes InfraLang declarations, types, visible symbols, structural object members, components, component exports, local module outputs, and inputs of initialized Terraform modules.
+- Completes InfraLang declarations, types, visible symbols, structural object members, component instance arguments and exports, local module outputs, and inputs of initialized Terraform modules.
 - Completes installed provider configurations, resource types, data sources, arguments, nested block names, and result attributes from Terraform or OpenTofu schemas when enabled.
 - Supports Go to Definition, hover, document symbols, and workspace symbols for InfraLang declarations and imported types.
 - Formats valid InfraLang documents and enables InfraLang formatting on save by default.

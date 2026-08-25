@@ -113,7 +113,7 @@ func (server *server) handle(message rpcMessage) {
 			"capabilities": map[string]any{
 				"positionEncoding":           "utf-16",
 				"textDocumentSync":           map[string]any{"openClose": true, "change": 1, "save": map[string]any{"includeText": true}},
-				"completionProvider":         map[string]any{"triggerCharacters": []string{".", ":", "{"}},
+				"completionProvider":         map[string]any{"triggerCharacters": []string{".", ":", "{", "(", ","}},
 				"documentFormattingProvider": true,
 				"definitionProvider":         true, "hoverProvider": true, "documentSymbolProvider": true,
 				"workspaceSymbolProvider": true,

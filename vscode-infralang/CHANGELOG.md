@@ -5,7 +5,7 @@ All notable changes to the InfraLang Visual Studio Code extension are documented
 ## Unreleased
 
 - Load provider schemas through an isolated cache before project initialization and refresh schemas automatically after Terraform artifacts change.
-- Complete structural keys in typed input defaults, including imported type aliases.
+- Complete structural keys in typed input defaults and component instance arguments, including imported type aliases and partially typed argument names.
 - Complete the `if` keyword for conditional let-assignment blocks.
 - Complete input keys and metadata for Terraform modules present in the local initialization manifest.
 - Add document formatting and enable InfraLang formatting on save by default.

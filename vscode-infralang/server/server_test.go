@@ -300,6 +300,61 @@ func TestCompletionUsesComponentScope(t *testing.T) {
 	}
 }
 
+func TestCompletionUsesComponentParametersInInstantiateArguments(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "main.infra")
+	writeTestFile(t, filepath.Join(root, "component.infra"), `
+type DeploymentConfig = object {
+  endpoint: string,
+  port?: number = 443,
+}
+component Deployment(hostname: string, config: DeploymentConfig) {
+  export selected = hostname
+}
+`)
+	workspace := newWorkspace()
+	workspace.setRoots([]string{root})
+	if err := workspace.scan(); err != nil {
+		t.Fatalf("scan workspace: %v", err)
+	}
+	server := &server{workspace: workspace}
+	uri := pathToURI(path)
+
+	partialSource := `instantiate deployment = Deployment(
+  host
+)`
+	if _, err := workspace.open(uri, partialSource, 1); err != nil {
+		t.Fatalf("open partial component instance: %v", err)
+	}
+	partialOffset := strings.Index(partialSource, "host\n") + len("host")
+	partialLabels := completionLabels(server.completions(TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: uri}, Position: positionAt(partialSource, partialOffset),
+	}))
+	if !partialLabels["hostname"] || !partialLabels["config"] {
+		t.Fatalf("partial instantiate argument completions = %v", partialLabels)
+	}
+	if partialLabels["instantiate"] || partialLabels["output"] {
+		t.Fatalf("non-parameter completions leaked into instantiate arguments: %v", partialLabels)
+	}
+
+	nestedSource := `instantiate deployment = Deployment(
+  hostname: "api",
+  config: {
+
+  },
+)`
+	if _, err := workspace.change(uri, nestedSource, 2); err != nil {
+		t.Fatalf("change component instance: %v", err)
+	}
+	nestedOffset := strings.Index(nestedSource, "{\n\n") + len("{\n")
+	nestedLabels := completionLabels(server.completions(TextDocumentPositionParams{
+		TextDocument: TextDocumentIdentifier{URI: uri}, Position: positionAt(nestedSource, nestedOffset),
+	}))
+	if !nestedLabels["endpoint"] || !nestedLabels["port"] || nestedLabels["hostname"] || nestedLabels["config"] {
+		t.Fatalf("nested instantiate argument completions = %v", nestedLabels)
+	}
+}
+
 func TestCompletionFollowsIndexedComponentsAndChainedFields(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "main.infra")

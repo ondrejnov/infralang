@@ -28,6 +28,9 @@ func (server *server) structuralArgumentCompletions(path, source string, offset 
 			expression, expressionType = value.Value, value.Type
 		case *syntax.InputDeclaration:
 			expression, expressionType = value.Default, value.Type
+		case *syntax.ComponentInstance:
+			expression = value.Arguments
+			expressionType = server.componentArgumentType(directory, value.ComponentName)
 		}
 		if expression == nil || expressionType == nil || !spanContains(expression.GetSpan(), offset) {
 			continue
@@ -38,7 +41,115 @@ func (server *server) structuralArgumentCompletions(path, source string, offset 
 		}
 		return structuralCompletionItems(object, expected.expression), true
 	}
+	if componentName, existing, ok := incompleteComponentArgumentContext(source, offset); ok {
+		expected := server.componentArgumentType(directory, componentName)
+		if expected != nil {
+			object := &syntax.ObjectExpression{}
+			for name := range existing {
+				object.Fields = append(object.Fields, syntax.ObjectField{Name: name, WireName: syntax.SourceNameToWire(name)})
+			}
+			return structuralCompletionItems(object, expected), true
+		}
+	}
 	return nil, false
+}
+
+func (server *server) componentArgumentType(directory, name string) *syntax.TypeExpression {
+	for _, index := range server.workspace.directoryFiles(directory) {
+		if index.File == nil {
+			continue
+		}
+		for _, declaration := range index.File.Declarations {
+			component, ok := declaration.(*syntax.ComponentDefinition)
+			if !ok || component.Name != name {
+				continue
+			}
+			result := &syntax.TypeExpression{BaseNode: component.BaseNode, Name: "object"}
+			for _, parameter := range component.Parameters {
+				result.Fields = append(result.Fields, syntax.TypeField{
+					BaseNode: parameter.BaseNode,
+					Name:     parameter.Name,
+					WireName: syntax.SourceNameToWire(parameter.Name),
+					Type:     parameter.Type,
+				})
+			}
+			return result
+		}
+	}
+	return nil
+}
+
+func incompleteComponentArgumentContext(source string, offset int) (string, map[string]bool, bool) {
+	tokens, _ := syntax.Lex("completion.infra", source)
+	for i := 0; i < len(tokens); i++ {
+		if tokens[i].Kind != syntax.TokenIdentifier || tokens[i].Lexeme != "instantiate" {
+			continue
+		}
+		j := i + 1
+		if j >= len(tokens) || tokens[j].Kind != syntax.TokenIdentifier {
+			continue
+		}
+		j++
+		if j < len(tokens) && tokens[j].Kind == syntax.TokenLeftBracket {
+			depth := 1
+			for j++; j < len(tokens) && depth > 0; j++ {
+				switch tokens[j].Kind {
+				case syntax.TokenLeftBracket:
+					depth++
+				case syntax.TokenRightBracket:
+					depth--
+				}
+			}
+		}
+		if j+2 >= len(tokens) || tokens[j].Kind != syntax.TokenAssign || tokens[j+1].Kind != syntax.TokenIdentifier || tokens[j+2].Kind != syntax.TokenLeftParen {
+			continue
+		}
+		componentName := tokens[j+1].Lexeme
+		existing := make(map[string]bool)
+		parentheses, braces, brackets := 1, 0, 0
+		hasColon := false
+		for k := j + 3; k < len(tokens); k++ {
+			token := tokens[k]
+			if token.Kind == syntax.TokenEOF || token.Span.Start.Offset > offset {
+				if parentheses == 1 && braces == 0 && brackets == 0 && !hasColon {
+					return componentName, existing, true
+				}
+				break
+			}
+			topLevel := parentheses == 1 && braces == 0 && brackets == 0
+			if topLevel && token.Kind == syntax.TokenIdentifier && k+1 < len(tokens) && tokens[k+1].Kind == syntax.TokenColon {
+				existing[token.Lexeme] = true
+			}
+			if topLevel && token.Kind == syntax.TokenColon {
+				hasColon = true
+			}
+			if topLevel && token.Kind == syntax.TokenComma {
+				hasColon = false
+				continue
+			}
+			switch token.Kind {
+			case syntax.TokenLeftParen:
+				parentheses++
+			case syntax.TokenRightParen:
+				parentheses--
+				if parentheses == 0 {
+					if token.Span.Start.Offset >= offset && !hasColon {
+						return componentName, existing, true
+					}
+					break
+				}
+			case syntax.TokenLeftBrace:
+				braces++
+			case syntax.TokenRightBrace:
+				braces--
+			case syntax.TokenLeftBracket:
+				brackets++
+			case syntax.TokenRightBracket:
+				brackets--
+			}
+		}
+	}
+	return "", nil, false
 }
 
 func (server *server) expectedObjectAt(expression syntax.Expression, expected completionType, offset int) (*syntax.ObjectExpression, completionType) {
