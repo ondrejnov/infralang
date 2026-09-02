@@ -50,7 +50,7 @@ func run(arguments []string) error {
 		return runCheck(arguments[1:])
 	case "fmt":
 		return runFormat(arguments[1:])
-	case "init", "apply", "validate", "plan", "destroy":
+	case "init", "validate", "plan", "output", "apply", "destroy":
 		return runTerraform(arguments[0], arguments[1:])
 	case "version", "--version", "-version":
 		fmt.Printf("InfraLang %s\n", version)
@@ -426,6 +426,6 @@ func printUsage(output *os.File) {
 	fmt.Fprintln(output, "  infralang build [-o FILE | -stdout] SOURCE.infra|MODULE_DIR")
 	fmt.Fprintln(output, "  infralang check SOURCE.infra|MODULE_DIR")
 	fmt.Fprintln(output, "  infralang fmt SOURCE.infra")
-	fmt.Fprintln(output, "  infralang init|validate|plan|apply|destroy [TERRAFORM_ARGS...]")
+	fmt.Fprintln(output, "  infralang init|validate|plan|output|apply|destroy [TERRAFORM_ARGS...]")
 	fmt.Fprintln(output, "  infralang version")
 }

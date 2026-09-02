@@ -475,14 +475,14 @@ bin/infralang build SOURCE.infra
 bin/infralang build MODULE_DIR
 bin/infralang build -stdout SOURCE.infra
 bin/infralang build -o OUTPUT.tf.json SOURCE.infra
-bin/infralang init|validate|plan|apply|destroy [TERRAFORM_ARGS...]
+bin/infralang init|validate|plan|output|apply|destroy [TERRAFORM_ARGS...]
 bin/infralang version
 bin/infralang help
 ```
 
 Place build flags before the source path. `-o` and `-stdout` are mutually exclusive and apply only to single-file `.infra` builds. `-h`, `--help`, `-version`, and `--version` are accepted aliases.
 
-`fmt` atomically formats one valid `.infra` file in place; it prints the filename when the file changed. `init`, `validate`, `plan`, `apply`, and `destroy` first compile the InfraLang source in the current directory, then delegate to Terraform with all remaining arguments and its normal stdin, stdout, stderr, and exit status. Never run `apply` or `destroy` without explicit user approval.
+`fmt` atomically formats one valid `.infra` file in place; it prints the filename when the file changed. `init`, `validate`, `plan`, `output`, `apply`, and `destroy` first compile the InfraLang source in the current directory, then delegate to Terraform with all remaining arguments and its normal stdin, stdout, stderr, and exit status. Never run `apply` or `destroy` without explicit user approval.
 
 When compiling a directory or module project, the CLI also runs `terraform providers schema -json` (errors are ignored if Terraform is unavailable) so provider nested blocks can be recognized and lowered as arrays. Provider resource/data arguments stay dynamically typed.
 

@@ -18,8 +18,8 @@ produce a sibling `.tf.json` unless `-o` is supplied.
 
 ### `infralang: missing command` or unknown command
 
-Use one of `build`, `check`, `fmt`, `init`, `validate`, `plan`, `apply`,
-`destroy`, `version`, or `help`. Put build flags before the source path:
+Use one of `build`, `check`, `fmt`, `init`, `validate`, `plan`, `output`,
+`apply`, `destroy`, `version`, or `help`. Put build flags before the source path:
 
 ```shell
 infralang build -stdout main.infra

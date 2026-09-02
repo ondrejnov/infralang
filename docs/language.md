@@ -697,7 +697,7 @@ InfraLang statically checks its own syntax, expressions, types, local module
 interfaces, components, and compile-time constructs. It does not replace
 Terraform/OpenTofu's dependency graph, provider-specific validation, version
 constraint solver, state engine, plan, or apply lifecycle. The CLI delegates
-`init`, `validate`, `plan`, `apply`, and `destroy` to Terraform/OpenTofu.
+`init`, `validate`, `plan`, `output`, `apply`, and `destroy` to Terraform/OpenTofu.
 
 When available, provider schema metadata is used to recognize and lower
 nested blocks in provider configurations. Provider resource and data-source

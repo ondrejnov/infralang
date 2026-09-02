@@ -344,6 +344,7 @@ infralang version
 cd examples/libvirt
 infralang init
 infralang plan
+infralang output -json
 infralang apply
 infralang destroy
 ```
@@ -353,7 +354,7 @@ JSON. `fmt` atomically formats a valid `.infra` source file in place. `build`
 compiles a source file or directory and writes `.tf.json` output; `-stdout` and
 `-o` are available for single-file builds.
 
-The `init`, `validate`, `plan`, `apply`, and `destroy` commands build the
+The `init`, `validate`, `plan`, `output`, `apply`, and `destroy` commands build the
 InfraLang source in the current directory first and then pass all arguments to
 Terraform. Terraform runs in the current directory and keeps its normal stdin,
 stdout, stderr, and exit status behavior.

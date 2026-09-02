@@ -579,9 +579,10 @@ before the source path. `fmt` atomically formats one valid `.infra` file in
 place and prints the filename when the file changed.
 
 The commands `infralang init`, `infralang validate`, `infralang plan`,
-`infralang apply`, and `infralang destroy` compile the current directory first,
-then delegate to Terraform with the remaining arguments. Prefer `check` for a
-safe compiler-only validation and obtain approval before `apply` or `destroy`.
+`infralang output`, `infralang apply`, and `infralang destroy` compile the
+current directory first, then delegate to Terraform with the remaining
+arguments. Prefer `check` for a safe compiler-only validation and obtain
+approval before `apply` or `destroy`.
 
 Recommended verification sequence:
 

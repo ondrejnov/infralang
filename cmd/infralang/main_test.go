@@ -118,7 +118,7 @@ func TestRunFormatDoesNotRewriteInvalidSource(t *testing.T) {
 	}
 }
 
-func TestRunTerraformBuildsAndPassesArguments(t *testing.T) {
+func TestRunTerraformOutputBuildsAndPassesArguments(t *testing.T) {
 	directory := t.TempDir()
 	t.Chdir(directory)
 	sourcePath := filepath.Join(directory, "main.infra")
@@ -138,8 +138,8 @@ func TestRunTerraformBuildsAndPassesArguments(t *testing.T) {
 	terraformBinary = terraformPath
 	t.Cleanup(func() { terraformBinary = previousTerraformBinary })
 
-	if err := runTerraform("plan", []string{"-input=false", "-out=plan.tfplan"}); err != nil {
-		t.Fatalf("runTerraform() error = %v", err)
+	if err := run([]string{"output", "-json"}); err != nil {
+		t.Fatalf("run() error = %v", err)
 	}
 
 	if _, err := os.Stat(filepath.Join(directory, "main.tf.json")); err != nil {
@@ -149,7 +149,7 @@ func TestRunTerraformBuildsAndPassesArguments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(arguments), "plan\n-input=false\n-out=plan.tfplan\n"; got != want {
+	if got, want := string(arguments), "output\n-json\n"; got != want {
 		t.Fatalf("Terraform arguments = %q, want %q", got, want)
 	}
 	workingDirectory, err := os.ReadFile(workingDirectoryPath)
