@@ -7,8 +7,8 @@
 3. If the directory has multiple `.infra` files, always validate the directory so imports and local interfaces are included.
 4. Run `infralang build -stdout FILE.infra` when reviewing one file without writing an artifact.
 5. Build the module directory when Terraform JSON artifacts are required.
-6. Run `terraform validate` or `tofu validate` for provider schemas, remote modules, and Terraform-specific behavior.
-7. Review `terraform plan` or `tofu plan` before any approved apply.
+6. From the module directory, run `infralang init -backend=false` when only provider/module initialization is needed, followed by `infralang validate` for provider schemas, remote modules, and Terraform-specific behavior.
+7. Review `infralang plan -out=PLAN_FILE` before any approved `infralang apply PLAN_FILE`.
 
 `check` does not write Terraform JSON. A diagnostic prevents artifact emission.
 Directory builds produce `main.tf.json` per compiled module; single-file builds
@@ -18,8 +18,8 @@ produce a sibling `.tf.json` unless `-o` is supplied.
 
 ### `infralang: missing command` or unknown command
 
-Use one of `build`, `check`, `fmt`, `init`, `validate`, `plan`, `output`,
-`apply`, `destroy`, `version`, or `help`. Put build flags before the source path:
+Use one of `build`, `check`, `fmt`, `init`, `validate`, `plan`, `apply`,
+`destroy`, `version`, or `help`. Put build flags before the source path:
 
 ```shell
 infralang build -stdout main.infra
@@ -38,7 +38,7 @@ Immediate `.infra` files in one directory form a single module. A file next to
 another `.infra` file is not an isolated compilation unit; compile the directory
 or let the CLI detect the module directory.
 
-### `terraform validate` fails after `infralang check` succeeds
+### `infralang validate` fails after `infralang check` succeeds
 
 This is expected when the issue is outside InfraLang's static boundary. Check:
 
@@ -49,7 +49,9 @@ This is expected when the issue is outside InfraLang's static boundary. Check:
 - Terraform-only child directories;
 - Terraform function availability and runtime expression semantics.
 
-Run Terraform/OpenTofu validation in the generated configuration directory.
+Run the InfraLang lifecycle commands from the module directory so they compile
+before delegating to Terraform. Use direct Terraform/OpenTofu only when
+validating an explicitly generated configuration in another directory.
 
 ## Syntax and Type Errors
 

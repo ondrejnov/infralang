@@ -27,11 +27,13 @@ assume that project files or project examples are available.
 - Preserve explicit Terraform resource, data, and module labels, provider aliases, module sources, and `moved` addresses unless changing state identity is intentional.
 - Prefer the smallest source change that satisfies the request.
 - Run `infralang check` after source changes. Build only when generated Terraform JSON is needed.
-- Run `terraform validate` or `tofu validate` when provider attributes, remote modules, or Terraform semantics are involved. `infralang check` does not replace it.
+- For the normal module lifecycle, use `infralang init`, `infralang validate`, `infralang plan`, `infralang apply`, and `infralang destroy`. These commands compile the current directory and then proxy the corresponding Terraform command, so do not run a separate build first unless an artifact is needed.
+- Prefer the InfraLang lifecycle proxy over direct `terraform` commands. Use direct Terraform or OpenTofu only when operating on an explicitly generated configuration outside the source module, when the proxy cannot represent the required workflow, or when the user explicitly requires OpenTofu.
+- Run `infralang validate` when provider attributes, remote modules, or Terraform semantics are involved. `infralang check` does not replace it.
 - Keep new configuration values in `.infra` `input` declarations and compile-time defaults. Do not create or rely on `.tfvars` files for new configurations unless an existing project workflow explicitly requires external overrides or the user explicitly requests them.
-- Do not run `terraform apply` or `tofu apply` without explicit user approval for the real infrastructure change.
+- Do not run `infralang apply`, `infralang destroy`, or their direct Terraform/OpenTofu equivalents without explicit user approval for the real infrastructure change.
 - Never put credentials, private keys, tokens, or secret values in `.infra` source or in assistant output.
-- Treat `terraform init`, provider installation, plans, state access, and storage examples as environment-affecting operations.
+- Treat `infralang init`, provider installation, plans, state access, and storage examples as environment-affecting operations.
 
 ## Mental Model
 
@@ -392,6 +394,27 @@ Provider resource/data kind names use snake_case lowering, so
 `aws.s3Bucket(...)` becomes `aws_s3_bucket` and
 `aws.availabilityZones(...)` becomes `aws_availability_zones`.
 
+Provider argument keys and provider-returned attributes follow different
+rules. Unquoted argument keys are authored in camelCase and lower to the
+provider's snake_case schema, but attributes read from data sources, resources,
+and modules must use the exact Terraform schema name. InfraLang does not lower
+member access:
+
+```infra
+data current = entra.clientConfig("current", {})
+
+resource application = entra.application("example", {
+  displayName: "Example",       # emits display_name
+  owners: [current.object_id],  # exact exported attribute; not objectId
+})
+
+output clientId = application.client_id
+```
+
+Confirm exported attribute names in current provider documentation and run
+Terraform validation; `infralang check` can accept a member access that the
+provider schema later rejects.
+
 ## Modules and Components
 
 Use a module for a separate Terraform unit with its own directory, interface,
@@ -579,17 +602,28 @@ before the source path. `fmt` atomically formats one valid `.infra` file in
 place and prints the filename when the file changed.
 
 The commands `infralang init`, `infralang validate`, `infralang plan`,
-`infralang output`, `infralang apply`, and `infralang destroy` compile the
-current directory first, then delegate to Terraform with the remaining
-arguments. Prefer `check` for a safe compiler-only validation and obtain
-approval before `apply` or `destroy`.
+`infralang apply`, and `infralang destroy` compile the current directory first,
+then delegate to Terraform with the remaining arguments. Use these proxy
+commands as the default lifecycle interface instead of invoking Terraform
+directly. Prefer `check` for a safe compiler-only validation and obtain approval
+before `apply` or `destroy`.
 
 Recommended verification sequence:
 
 1. `infralang check SOURCE_OR_MODULE_DIR`
-2. `infralang build -stdout FILE.infra` for a single-file output review, or build the directory when artifacts are required.
-3. `terraform validate` or `tofu validate` in the generated configuration directory.
-4. Review the plan and all address changes before any apply.
+2. From the module directory, run `infralang init` (use `-backend=false` when only provider/module initialization is appropriate).
+3. Run `infralang validate` for provider schemas, remote modules, and Terraform semantics.
+4. Run `infralang plan -out=PLAN_FILE` and review the plan and all address changes.
+5. After explicit approval, apply that exact saved plan with `infralang apply PLAN_FILE`.
+
+Use `infralang build -stdout FILE.infra` for a single-file output review, or
+build the directory only when generated artifacts are specifically required.
+
+Do not infer that a successful validation checked a file written via
+`infralang build -o PATH`. Terraform only loads configuration from its current
+working directory. When generating into an isolated directory, initialize and
+validate that exact directory; this is one case where direct Terraform/OpenTofu
+commands may be necessary.
 
 Diagnostics include filename, line, column, source context, and a caret. Parse
 errors stop compilation. Any diagnostic prevents artifact emission.
@@ -605,10 +639,12 @@ errors stop compilation. Any diagnostic prevents artifact emission.
 - Treating `static for` as Terraform `for_each`.
 - Using `...inputs(value)` as a normal object spread.
 - Forgetting that unquoted keys and provider methods become snake_case.
+- Writing camelCase member access for provider-returned attributes such as `objectId` instead of the schema name `object_id`.
 - Changing explicit labels or aliases during a readability refactor without reviewing state addresses.
 - Assuming components create a Terraform module namespace or outputs.
 - Assuming a module import alone emits a Terraform module block.
 - Generating or editing JSON before the source passes `infralang check`.
+- Running Terraform validation outside the directory containing the generated configuration and mistaking validation of an empty or unrelated directory for success.
 
 For focused guidance, read the bundled references:
 
